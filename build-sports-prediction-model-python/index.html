@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build a Sports Prediction Model with Python and a Live API — CodeFix Solution</title>
+    <meta name="description" content="Build a live sports prediction system in 30 minutes with Python. Fetch calibrated win probabilities, detect edges, and set up real-time alerts across NBA, NFL, MLB, NHL, tennis, and esports.">
+    <link rel="canonical" href="https://codefixsolution.com/build-sports-prediction-model-python/">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build a Sports Prediction Model with Python and a Live API</h1>
+            <div class="meta">April 14, 2026 &middot; 8 min read &middot; Python, API, Machine Learning</div>
+
+            <p>Most tutorials on sports prediction stop at "train a model on historical data." That's the easy part. The hard part is getting <strong>live, calibrated probabilities</strong> during an actual game &mdash; the kind you can trade on or build alerts around.</p>
+            <p>This guide shows you how to go from zero to a working sports prediction system in under 30 minutes using Python and a real-time sports prediction API.</p>
+
+            <h2>What We're Building</h2>
+            <p>By the end of this tutorial, you'll have:</p>
+            <ul>
+                <li>A Python script that fetches <strong>live win probabilities</strong> for NBA, NFL, MLB, NHL, tennis, and esports</li>
+                <li>Fair probability estimates calibrated on 40,000+ historical games</li>
+                <li>Edge detection: spots where the market price differs from the model's fair value</li>
+                <li>A simple alert system that notifies you when an edge appears</li>
+            </ul>
+
+            <h2>Prerequisites</h2>
+            <ul>
+                <li>Python 3.8+</li>
+                <li><code>requests</code> library (<code>pip install requests</code>)</li>
+                <li>A free API key (we'll get one in Step 1)</li>
+            </ul>
+
+            <h2>Step 1: Get Your API Key</h2>
+            <p>We'll use the <a href="https://zenhodl.net/docs" rel="noopener">ZenHodl Fair Probability API</a>, which serves calibrated ML predictions across 10 sports. It has a 7-day free trial &mdash; no credit card required to start.</p>
+            <ol>
+                <li>Go to <a href="https://zenhodl.net/signup" rel="noopener">zenhodl.net/signup</a> and create a free account</li>
+                <li>Copy your API key from the dashboard</li>
+            </ol>
+
+            <h2>Step 2: Fetch Live Game Predictions</h2>
+<pre><code>import requests
+
+API_KEY = "your_api_key_here"
+BASE_URL = "https://zenhodl.net/v1"
+
+headers = {"X-API-Key": API_KEY}
+
+# Get all live games with fair win probabilities
+response = requests.get(f"{BASE_URL}/games", headers=headers)
+games = response.json()
+
+for game in games[:5]:
+    print(f"{game['away_team']} @ {game['home_team']}")
+    print(f"  Score: {game.get('score', 'N/A')}")
+    print(f"  Fair WP (home): {game['fair_wp']:.1%}")
+    print(f"  Period: {game.get('period', 'N/A')}")
+    print()</code></pre>
+            <p>The <code>fair_wp</code> field is the model's calibrated estimate of the home team's win probability, updated every time the score changes. These aren't raw model outputs &mdash; they're post-hoc isotonic-calibrated predictions trained on tens of thousands of resolved games.</p>
+
+            <h2>Step 3: Detect Edges Against the Market</h2>
+            <p>An "edge" is the gap between what the model thinks a team's true win probability is and what the market is pricing it at:</p>
+<pre><code># Get live edges
+response = requests.get(f"{BASE_URL}/edges", headers=headers)
+edges = response.json()
+
+print(f"Found {len(edges)} active edges:\n")
+
+for edge in edges:
+    print(f"  {edge['team']} ({edge['sport']})")
+    print(f"    Market price: {edge['market_price_c']}c")
+    print(f"    Fair value:   {edge['fair_prob_c']:.0f}c")
+    print(f"    Edge:         +{edge['edge_c']:.1f}c")
+    print()</code></pre>
+            <p>An edge of +8c means the model thinks the team is 8 percentage points more likely to win than the market price implies.</p>
+
+            <h2>Step 4: Build a Simple Alert System</h2>
+<pre><code>import time
+
+MIN_EDGE = 8  # Only alert on 8c+ edges
+
+while True:
+    response = requests.get(f"{BASE_URL}/edges", headers=headers)
+    edges = response.json()
+
+    for edge in edges:
+        if edge['edge_c'] >= MIN_EDGE:
+            print(f"EDGE ALERT: {edge['team']} ({edge['sport']})")
+            print(f"   Market: {edge['market_price_c']}c")
+            print(f"   Fair: {edge['fair_prob_c']:.0f}c")
+            print(f"   Edge: +{edge['edge_c']:.1f}c")
+            print()
+
+    time.sleep(60)</code></pre>
+
+            <h2>How the Model Works</h2>
+            <p>The API uses XGBoost models trained on historical play-by-play data:</p>
+            <ul>
+                <li><strong>NBA/NHL/MLB</strong>: Score differential, time remaining, Elo ratings, team offensive/defensive ratings, pace, and momentum features</li>
+                <li><strong>Tennis</strong>: Player-specific serve rates (267 ATP players) + Elo + hierarchical point&rarr;game&rarr;set&rarr;match model</li>
+                <li><strong>CS2/LoL</strong>: Round state, economy, dragons/barons, team map win rates, head-to-head history</li>
+            </ul>
+            <p>All models are calibrated with isotonic regression so that when the model outputs "70%", the team actually wins ~70% of the time historically.</p>
+
+            <h2>Step 5: Filter by Sport</h2>
+<pre><code># Get only NBA games
+response = requests.get(
+    f"{BASE_URL}/games",
+    headers=headers,
+    params={"sport": "NBA"}
+)
+nba_games = response.json()
+print(f"Live NBA games: {len(nba_games)}")</code></pre>
+            <p>Available sports: <code>NBA</code>, <code>NFL</code>, <code>MLB</code>, <code>NHL</code>, <code>NCAAMB</code>, <code>NCAAWB</code>, <code>CFB</code>, <code>ATP</code>, <code>CS2</code>, <code>LOL</code>, <code>SOCCER</code></p>
+
+            <h2>Next Steps</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/docs" rel="noopener">Full API documentation</a> &mdash; all endpoints, authentication, rate limits</li>
+                <li><a href="https://zenhodl.net/results" rel="noopener">Live trading results</a> &mdash; real predictions resolved against actual game outcomes</li>
+                <li><a href="https://zenhodl.net/course" rel="noopener">Prediction bot course</a> &mdash; 6-module course building a complete prediction system from scratch</li>
+            </ul>
+
+            <div class="cta">
+                <p style="margin-bottom: 12px; color: var(--muted);">Start building with live sports predictions</p>
+                <a href="https://zenhodl.net/signup">Get Free API Key &rarr;</a>
+            </div>
+        </article>
+    </div>
+
+    <footer><div class="container">&copy; 2026 CodeFix Solution</div></footer>
+</body>
+</html>
