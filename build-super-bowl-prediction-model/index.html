@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build a Super Bowl Prediction Model in Python (ELO + Monte Carlo Futures) &mdash; CodeFix Solution</title>
+    <meta name="description" content="Build a Super Bowl prediction model from scratch using Python, ELO ratings, and Monte Carlo simulation. Learn how to generate championship probabilities, simulate the NFL playoff bracket, and backtest against actual outcomes.">
+    <link rel="canonical" href="https://codefixsolution.com/build-super-bowl-prediction-model/">
+    <meta property="og:title" content="How to Build a Super Bowl Prediction Model in Python (ELO + Monte Carlo Futures)">
+    <meta property="og:description" content="Complete Python tutorial: ESPN data, ELO ratings, Monte Carlo bracket simulation, and backtesting Super Bowl futures predictions.">
+    <meta property="og:url" content="https://codefixsolution.com/build-super-bowl-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+        th { background: var(--card); color: var(--text); font-weight: 600; }
+        td { color: #bbb; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build a Super Bowl Prediction Model in Python (ELO + Monte Carlo Futures)</h1>
+            <div class="meta">April 22, 2026 &middot; 15 min read &middot; Python, ELO, Monte Carlo, NFL, Machine Learning</div>
+
+            <p>Most "Super Bowl prediction model" tutorials either train a win-loss classifier on box scores and call it done, or dump a pile of features into XGBoost and hope for the best. Neither teaches you what actually matters: producing a <em>calibrated championship probability</em> for every NFL team that holds up when you run it against an entire playoff bracket.</p>
+
+            <p>A real <strong>Super Bowl prediction model</strong> has to do three things the shortcut versions won't:</p>
+
+            <ol>
+                <li>Produce <strong>calibrated team strengths</strong> (ELO ratings) that update every regular-season game</li>
+                <li>Simulate the <strong>full 13-game playoff bracket</strong> using Monte Carlo &mdash; not just score one matchup</li>
+                <li>Strip <strong>home-field advantage</strong> correctly for the Super Bowl (neutral site) but preserve it through Wild Card, Divisional, and Conference rounds</li>
+            </ol>
+
+            <p>This guide walks through all three using Python, ELO ratings, and ESPN's publicly available NFL data. By the end you'll have a reproducible pipeline that outputs team-by-team championship probabilities you can publish as preseason futures, and a backtest harness that runs your model on any past playoff bracket &mdash; including a 2025-26 postseason backtest we ran ourselves and published.</p>
+
+            <h2>What You'll Build</h2>
+            <p>By the end of this tutorial:</p>
+            <ul>
+                <li>A Python data pipeline that pulls ESPN NFL data for any regular season and playoff bracket</li>
+                <li>An <strong>NFL-tuned ELO system</strong> with 55-point home-field advantage and log-based margin-of-victory scaling</li>
+                <li>A <strong>Monte Carlo playoff simulator</strong> that generates championship probabilities for all 14 playoff teams (or all 32 teams preseason)</li>
+                <li>A <strong>Super Bowl backtest harness</strong> that runs pre-game predictions on any past playoff bracket without look-ahead bias</li>
+                <li>A <strong>neutral-site adjustment</strong> for the Super Bowl that most public models fumble</li>
+            </ul>
+
+            <p>Python 3.11+. Dependencies: <code>pandas</code>, <code>numpy</code>, <code>requests</code>. No XGBoost needed for the baseline &mdash; you can add it later.</p>
+
+            <h2>Step 1: Pull ESPN NFL Data</h2>
+
+            <p>ESPN's public scoreboard API gives you every NFL game with final scores. No auth. Hit a URL with a date, parse JSON:</p>
+
+            <pre><code>import requests, pandas as pd
+from datetime import date, timedelta
+
+def fetch_nfl_games(date_yyyymmdd: str) -> list[dict]:
+    """Pull every NFL game for a given date with final scores."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+    r = requests.get(url, params={"dates": date_yyyymmdd, "limit": 30}, timeout=20)
+    r.raise_for_status()
+    out = []
+    for ev in r.json().get("events", []):
+        comp = ev["competitions"][0]
+        home = next(t for t in comp["competitors"] if t["homeAway"] == "home")
+        away = next(t for t in comp["competitors"] if t["homeAway"] == "away")
+        if not (home.get("winner") or away.get("winner")):
+            continue
+        out.append({
+            "game_id": int(ev["id"]),
+            "date": date_yyyymmdd,
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": int(home.get("score", 0) or 0),
+            "away_score": int(away.get("score", 0) or 0),
+            "home_won": int(home.get("winner", False)),
+            "season_type": ev.get("season", {}).get("type"),  # 2=regular, 3=postseason
+            "notes": [n.get("headline","") for n in comp.get("notes", [])],
+        })
+    return out
+
+def fetch_season(start: str, end: str) -> pd.DataFrame:
+    d0 = date.fromisoformat(start); d1 = date.fromisoformat(end)
+    rows = []
+    cur = d0
+    while cur <= d1:
+        try:
+            rows.extend(fetch_nfl_games(cur.strftime("%Y%m%d")))
+        except Exception as e:
+            print(f"skip {cur}: {e}")
+        cur += timedelta(days=1)
+    return pd.DataFrame(rows)
+
+season_2526 = fetch_season("2025-09-04", "2026-02-08")</code></pre>
+
+            <blockquote>
+                <p><strong>Note:</strong> ESPN rate-limits this endpoint. Add <code>time.sleep(0.5)</code> between calls if pulling multiple seasons to avoid 429s.</p>
+            </blockquote>
+
+            <h2>Step 2: Build NFL ELO With Correct Tuning Constants</h2>
+
+            <p>ELO for the NFL needs different constants than college basketball or NBA because the season is short (17 games) and home-field advantage is massive (~55 ELO points historically).</p>
+
+            <pre><code>K = 20.0      # learning rate
+HFA = 55.0    # NFL home-field advantage in ELO points
+
+def compute_nfl_elo(games: pd.DataFrame) -> tuple[dict, dict]:
+    """
+    Returns (current_ratings, pre_game_elo_diff_by_game_id).
+    elo_diff in the second dict is neutral (no HFA) — add HFA at inference time.
+    """
+    elo = {}
+    game_elo_diff = {}
+
+    games = games.sort_values("game_id").reset_index(drop=True)
+    for _, r in games.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        hs, as_ = r["home_score"], r["away_score"]
+        if not h or not a or pd.isna(hs) or pd.isna(as_):
+            continue
+        he = elo.get(h, 1500.0)
+        ae = elo.get(a, 1500.0)
+        game_elo_diff[int(r["game_id"])] = he - ae  # neutral diff for features
+
+        expected_h = 1.0 / (1.0 + 10 ** ((ae - he - HFA) / 400.0))
+        actual_h = 1.0 if hs > as_ else (0.5 if hs == as_ else 0.0)
+        margin = abs(hs - as_)
+        # NFL-tuned MoV (log-based; football scores have heavier tails)
+        mov = np.log(1 + margin) * (2.2 / (max(0, abs(he-ae))*0.001 + 2.2))
+        mov = max(1.0, min(mov, 2.5))
+
+        delta = K * mov * (actual_h - expected_h)
+        elo[h] = he + delta
+        elo[a] = ae - delta
+
+    return elo, game_elo_diff</code></pre>
+
+            <p>Run this on multiple seasons of data (2020-2025 is a good base) to build team ratings that stabilize. After the full season, your top teams should look reasonable &mdash; historically, teams with 13+ wins sit around 1680-1720 ELO.</p>
+
+            <h2>Step 3: Pre-Game Win Probability From ELO</h2>
+
+            <p>The simplest and most defensible pre-game win-probability for an NFL matchup is an ELO-based logistic:</p>
+
+            <pre><code>def pregame_win_prob(home_team: str, away_team: str, elo: dict, is_neutral: bool = False) -> float:
+    """Pre-game home win probability. Strip HFA for neutral-site games (e.g. Super Bowl)."""
+    he = elo.get(home_team, 1500.0)
+    ae = elo.get(away_team, 1500.0)
+    hfa = 0 if is_neutral else HFA
+    elo_diff = he - ae + hfa
+    return 1.0 / (1.0 + 10 ** (-elo_diff / 400.0))</code></pre>
+
+            <p>That's it. No machine learning required for the baseline &mdash; pure ELO. Historically, a cleanly-tuned NFL ELO model hits 62-65% accuracy on regular-season games and holds up in the playoffs.</p>
+
+            <h3>The Super Bowl neutral-site trap</h3>
+
+            <p>The Super Bowl is played at a predetermined neutral site. If you forget to pass <code>is_neutral=True</code>, your home team gets a 55-point ELO bonus it doesn't deserve. That inflates their win probability by ~10 percentage points. This is the single most common mistake in Super Bowl prediction models.</p>
+
+            <h2>Step 4: Monte Carlo Simulate the Playoff Bracket</h2>
+
+            <p>To get a championship probability for a given team, you can't just multiply their win probabilities in each round &mdash; the opponents in later rounds depend on earlier outcomes. You have to simulate the full bracket 10,000+ times.</p>
+
+            <pre><code>import numpy as np
+import random
+
+def simulate_playoff_bracket(seeds: dict, elo: dict, n_sims: int = 10000) -> dict:
+    """
+    seeds: {'AFC': [team_abbr_by_seed_1_to_7], 'NFC': [...]}
+    Returns championship probability per team across n_sims simulations.
+    """
+    wins = {t: 0 for conf in seeds.values() for t in conf}
+
+    for _ in range(n_sims):
+        conf_champs = {}
+        for conf, teams in seeds.items():
+            # Wild Card (seed 1 gets a bye)
+            # 2v7, 3v6, 4v5
+            alive = [teams[0]]  # bye
+            for s_home, s_away in [(1, 6), (2, 5), (3, 4)]:
+                p = pregame_win_prob(teams[s_home], teams[s_away], elo)
+                if random.random() < p:
+                    alive.append(teams[s_home])
+                else:
+                    alive.append(teams[s_away])
+            # Divisional: 1v lowest remaining seed, 2v3 of remaining by original seed
+            alive_seeds = sorted(alive, key=lambda t: teams.index(t))
+            # Reseed: top seed plays lowest seed; other two play
+            div1_home, div1_away = alive_seeds[0], alive_seeds[-1]
+            div2_home, div2_away = alive_seeds[1], alive_seeds[2]
+            p1 = pregame_win_prob(div1_home, div1_away, elo)
+            p2 = pregame_win_prob(div2_home, div2_away, elo)
+            w1 = div1_home if random.random() < p1 else div1_away
+            w2 = div2_home if random.random() < p2 else div2_away
+            # Conference Championship
+            # Higher seed hosts (lower index in original seeds)
+            if teams.index(w1) < teams.index(w2):
+                pc = pregame_win_prob(w1, w2, elo)
+                conf_champs[conf] = w1 if random.random() < pc else w2
+            else:
+                pc = pregame_win_prob(w2, w1, elo)
+                conf_champs[conf] = w2 if random.random() < pc else w1
+
+        # Super Bowl (neutral site!)
+        afc, nfc = conf_champs['AFC'], conf_champs['NFC']
+        # Convention: AFC home in even years, but it's actually neutral — just call AFC "home"
+        p = pregame_win_prob(afc, nfc, elo, is_neutral=True)
+        champ = afc if random.random() < p else nfc
+        wins[champ] += 1
+
+    return {t: w / n_sims for t, w in wins.items()}</code></pre>
+
+            <p>Running this with 10,000 simulations gives you stable championship probabilities accurate to within ~1 percentage point for each team. Doubling to 20,000 simulations gets you to ~0.5pp.</p>
+
+            <h2>Step 5: Backtest on a Past Playoff Bracket</h2>
+
+            <p>The real test: take a past playoff field, freeze ELO at the regular-season cutoff, and run pre-game predictions on every playoff game. Score accuracy, Brier, and calibration.</p>
+
+            <pre><code>def backtest_playoffs(playoff_games: pd.DataFrame, elo_pregame: dict) -> pd.DataFrame:
+    """
+    playoff_games: rows with home_team, away_team, home_won, round_note
+    elo_pregame: team -> ELO rating at the moment before playoffs begin
+    """
+    out = []
+    for _, g in playoff_games.iterrows():
+        is_sb = "Super Bowl" in (g["round_note"] or "")
+        p_home = pregame_win_prob(g["home_team"], g["away_team"], elo_pregame, is_neutral=is_sb)
+        pick = int(p_home >= 0.5)
+        out.append({
+            "matchup": f"{g['home_team']} vs {g['away_team']}",
+            "model_p_home": round(p_home, 3),
+            "actual_home_won": int(g["home_won"]),
+            "correct": int(pick == int(g["home_won"])),
+            "round": g["round_note"],
+        })
+    return pd.DataFrame(out)
+
+pred = backtest_playoffs(playoff_2526, frozen_elo)
+acc = pred["correct"].mean()
+brier = ((pred["model_p_home"] - pred["actual_home_won"]) ** 2).mean()
+print(f"Playoff accuracy: {acc:.3f}")
+print(f"Brier score: {brier:.4f}")</code></pre>
+
+            <blockquote>
+                <p><strong>What we got:</strong> When we ran this pipeline on the 2025-26 NFL playoffs (13 games), our model hit 9 of 13 (69.2%) including the Super Bowl LX call &mdash; Seattle over New England, 29-13. Full per-round breakdown and every wrong pick is <a href="https://zenhodl.net/blog/nfl-playoffs-super-bowl-lx-backtest">in the public retrospective</a>.</p>
+            </blockquote>
+
+            <h2>Step 6: Measure Calibration (ECE)</h2>
+
+            <p>Accuracy alone can hide a miscalibrated model. A team-agnostic check: group predictions into probability buckets and check that a 70%-confidence bucket actually wins 70% of the time.</p>
+
+            <pre><code>def expected_calibration_error(y_pred: np.ndarray, y_true: np.ndarray, n_bins: int = 10) -> float:
+    bins = np.linspace(0.0, 1.0, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        mask = (y_pred >= bins[i]) & (y_pred < bins[i+1])
+        if i == n_bins - 1:
+            mask = (y_pred >= bins[i]) & (y_pred <= bins[i+1])
+        if mask.sum() == 0:
+            continue
+        gap = abs(y_pred[mask].mean() - y_true[mask].mean())
+        weight = mask.sum() / len(y_pred)
+        ece += gap * weight
+    return ece</code></pre>
+
+            <p>For NFL, a well-tuned model should target ECE below 5% on the full regular season. Playoff-only ECE on 13 games is always noisy due to small sample &mdash; don't over-tune to it.</p>
+
+            <h2>Common Mistakes That Kill an NFL Futures Model</h2>
+
+            <h3>Forgetting the Super Bowl is neutral-site</h3>
+            <p>Baking 55-point HFA into the Super Bowl matchup systematically overstates the "home" team's championship probability by ~10pp. If your model shows the AFC champion at 55% and the NFC at 45%, double-check that you stripped HFA for the final game.</p>
+
+            <h3>Missing the playoff reseed</h3>
+            <p>Under current NFL rules, after Wild Card Weekend the remaining divisional teams are <strong>reseeded</strong> so that the top remaining seed plays the lowest remaining seed. If your Monte Carlo doesn't reseed, you'll mis-predict the Divisional round bracket.</p>
+
+            <h3>Not excluding playoff games from ELO training</h3>
+            <p>If your ELO updates include the playoff games you're trying to predict, you've leaked the future. Freeze ELO at the end of the regular season.</p>
+
+            <h3>Ignoring QB injuries</h3>
+            <p>NFL ELO doesn't natively adjust for QB availability. If the starting QB is out, you need a player-level ELO penalty (~50-100 points). Many public models skip this and get burned in rounds where a backup plays.</p>
+
+            <h3>Measuring only accuracy</h3>
+            <p>A model that hits 69% accuracy but has 30% ECE on its most confident bucket is giving you bad Kelly sizing. Always report ECE alongside accuracy.</p>
+
+            <div class="cta">
+                <h3>Want to skip building this yourself?</h3>
+                <p>ZenHodl's API gives you pre-built, pre-calibrated NFL win probabilities, plus historical snapshots for backtesting your own Super Bowl strategies. 7-day free trial, no credit card.</p>
+                <a href="https://zenhodl.net/pricing">Get API access &rarr;</a>
+            </div>
+
+            <h2>Where to Go From Here</h2>
+
+            <p>The pipeline above gets you to a solid baseline &mdash; on par with FiveThirtyEight-era NFL ELO. From here, the most productive extensions are:</p>
+
+            <ul>
+                <li><strong>QB-adjusted ELO:</strong> Track a separate QB-only ELO component that attaches to the starter. When an injury happens, the team ELO drops by the QB's delta.</li>
+                <li><strong>Schedule-strength adjustments:</strong> A 12-win team against a weak schedule is not as strong as a 12-win team against a hard one. Opponent-adjusted ELO recovers this signal.</li>
+                <li><strong>Division rivalry damping:</strong> Division games should have compressed edges (teams know each other too well). Add a rivalry term that pulls win probabilities toward 50%.</li>
+                <li><strong>Injury feed integration:</strong> The single largest non-ELO feature you can add. Commercial injury feeds are expensive but worth it if you're serious.</li>
+                <li><strong>XGBoost upgrade:</strong> Once you have ELO, QB, schedule strength, and injuries as features, train an XGBoost model with isotonic calibration as a drop-in replacement for the pure logistic.</li>
+            </ul>
+
+            <h2>Summary</h2>
+
+            <p>A production-grade <strong>Super Bowl prediction model</strong> is NFL-tuned ELO + Monte Carlo bracket simulation + correct neutral-site handling + honest calibration measurement. The ingredients are all publicly available. The hard parts are the details: the 55-point HFA, the neutral-site strip on the Super Bowl, the reseed logic in the Divisional round, and the discipline to freeze ELO before the playoffs begin.</p>
+
+            <p>Next tutorial: <a href="/build-march-madness-prediction-model/">how to build the equivalent for March Madness</a> &mdash; same calibration discipline, different sport, different feature set.</p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">
+            &copy; 2026 CodeFix Solution &middot; Production ML &amp; data engineering case studies
+        </div>
+    </footer>
+</body>
+</html>
