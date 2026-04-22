@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>From Jupyter to Production: Packaging an ML Model for a REST API — CodeFix Solution</title>
+    <meta name="description" content="Take a scikit-learn or XGBoost model from notebook to production-ready REST API. Pickle versioning, integrity checks, FastAPI endpoints, and graceful fallback — with working Python code.">
+    <link rel="canonical" href="https://codefixsolution.com/jupyter-to-production-ml-api/">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 700; margin: 28px 0 12px; color: var(--text); }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; color: #86efac; }
+        strong { color: var(--text); }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: #ccc; }
+        th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        .warn { background: #1f1a0a; border-left: 3px solid #f59e0b; padding: 14px 18px; border-radius: 4px; margin: 20px 0; color: #fcd34d; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>From Jupyter to Production: Packaging an ML Model for a REST API</h1>
+            <div class="meta">April 21, 2026 &middot; 14 min read &middot; Python, FastAPI, MLOps</div>
+
+            <p>Your notebook has a trained XGBoost model. Cross-validation looks great. You need it serving live predictions at low latency behind a REST API — but the leap from <code>pickle.dump(model, f)</code> in a Jupyter cell to a production FastAPI service has about a dozen moving parts that aren't obvious.</p>
+
+            <p>This post walks through a real packaging pattern: serializing the model with metadata, verifying integrity at load time, building a FastAPI endpoint, handling versioning, and gracefully falling back when the model file goes missing. Every block is copy-pasteable.</p>
+
+            <h2>Step 1: Save the Model With Metadata, Not Just the Model</h2>
+
+            <p>Naive pickle loses critical context: which features did the model expect? What's its training date? Its calibration metrics? What calibrator wraps it? Wrap everything in a dict before pickling.</p>
+
+<pre><code>import pickle
+import hashlib
+import datetime as dt
+from pathlib import Path
+
+def save_model_bundle(out_path: Path,
+                      model,
+                      feature_cols: list,
+                      calibrator=None,
+                      metrics: dict = None,
+                      meta: dict = None) -&gt; str:
+    """Serialize model + all metadata needed to run it in production.
+    Returns the SHA-256 of the pickle for integrity tracking.
+    """
+    bundle = {
+        "model": model,
+        "calibrator": calibrator,
+        "feature_cols": list(feature_cols),
+        "trained_at": dt.datetime.utcnow().isoformat() + "Z",
+        "python_version": __import__("sys").version.split()[0],
+        "xgboost_version": __import__("xgboost").__version__,
+        "sklearn_version": __import__("sklearn").__version__,
+        "metrics": metrics or {},
+        "meta": meta or {},
+    }
+    with open(out_path, "wb") as f:
+        pickle.dump(bundle, f)
+    sha = hashlib.sha256(out_path.read_bytes()).hexdigest()
+    # Write companion hash file
+    out_path.with_suffix(".sha256").write_text(f"{sha}  {out_path.name}\n")
+    return sha</code></pre>
+
+            <p>Companion <code>.sha256</code> file enables integrity verification at load time and in CI. If either file is corrupted or tampered with, the hashes won't match.</p>
+
+            <h2>Step 2: Load With Integrity Verification</h2>
+
+<pre><code>class ModelBundle:
+    def __init__(self, model, calibrator, feature_cols, metrics, meta):
+        self.model = model
+        self.calibrator = calibrator
+        self.feature_cols = feature_cols
+        self.metrics = metrics
+        self.meta = meta
+
+    @classmethod
+    def load(cls, path: Path, verify: bool = True) -&gt; "ModelBundle":
+        if not path.exists():
+            raise FileNotFoundError(f"Model not found at {path}")
+        if verify:
+            hash_path = path.with_suffix(".sha256")
+            if hash_path.exists():
+                expected = hash_path.read_text().strip().split()[0]
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                if actual != expected:
+                    raise ValueError(
+                        f"INTEGRITY FAIL: {path.name} hash mismatch. "
+                        f"Expected {expected[:16]}... got {actual[:16]}..."
+                    )
+        with open(path, "rb") as f:
+            b = pickle.load(f)
+        return cls(
+            model=b["model"],
+            calibrator=b.get("calibrator"),
+            feature_cols=b["feature_cols"],
+            metrics=b.get("metrics", {}),
+            meta=b.get("meta", {}),
+        )
+
+    def predict_proba(self, X):
+        if self.calibrator is not None:
+            return self.calibrator.predict_proba(X)
+        return self.model.predict_proba(X)</code></pre>
+
+            <div class="warn">
+                <strong>Why integrity checks?</strong> Pickle files can be silently replaced in production (bad deploys, partial rsync, disk corruption, malicious tampering). An integrity check turns silent failures into loud ones.
+            </div>
+
+            <h2>Step 3: Build a Feature-Order-Agnostic Predict Function</h2>
+
+            <p>The order of your feature columns at training time must match the order at inference. Hard-coding the order is brittle. Instead, let the bundle remember which features it needs and let the caller pass a dict.</p>
+
+<pre><code>import numpy as np
+
+def bundle_predict(bundle: ModelBundle, features: dict) -&gt; float:
+    """Predict P(class=1) from a dict of feature values.
+    Missing features default to 0.0; extra features are ignored.
+    """
+    x = np.array(
+        [[features.get(col, 0.0) for col in bundle.feature_cols]],
+        dtype=np.float32,
+    )
+    proba = bundle.predict_proba(x)[0, 1]
+    return float(np.clip(proba, 0.01, 0.99))
+
+# Usage
+features = {
+    "score_diff": 5,
+    "seconds_remaining": 300,
+    "time_fraction": 0.105,
+    # model can have more features; missing ones default to 0.0
+}
+wp = bundle_predict(bundle, features)</code></pre>
+
+            <p>This pattern means your API callers don't need to know about feature ordering or the exact set of features in use. Swap a model with different features in and out without touching API code.</p>
+
+            <h2>Step 4: Wrap in FastAPI</h2>
+
+            <p>Load the model once at startup, hold it in module state, and serve predictions via a simple endpoint.</p>
+
+<pre><code>from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from pathlib import Path
+
+app = FastAPI(title="WP Prediction API")
+MODEL_PATH = Path("./model_bundle.pkl")
+_bundle: ModelBundle | None = None
+
+@app.on_event("startup")
+async def load_model():
+    global _bundle
+    try:
+        _bundle = ModelBundle.load(MODEL_PATH)
+        print(f"Loaded model: {_bundle.meta}  metrics={_bundle.metrics}")
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+
+class PredictRequest(BaseModel):
+    features: dict
+
+class PredictResponse(BaseModel):
+    probability: float
+    model_version: str
+    trained_at: str
+
+@app.post("/v1/predict", response_model=PredictResponse)
+async def predict(req: PredictRequest):
+    if _bundle is None:
+        raise HTTPException(503, "Model not loaded")
+    try:
+        p = bundle_predict(_bundle, req.features)
+        return PredictResponse(
+            probability=p,
+            model_version=_bundle.meta.get("version", "unknown"),
+            trained_at=_bundle.meta.get("trained_at", "unknown"),
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Prediction failed: {e}")
+
+@app.get("/v1/health")
+async def health():
+    return {
+        "status": "ok" if _bundle else "model_not_loaded",
+        "model_metrics": _bundle.metrics if _bundle else None,
+    }</code></pre>
+
+            <p>Run with <code>uvicorn main:app --host 0.0.0.0 --port 8000</code>. Supports thousands of requests/sec on modest hardware once the model is cached in process memory.</p>
+
+            <h2>Step 5: Handle Model Reloads Gracefully</h2>
+
+            <p>You'll want to swap models without restarting the API (retraining is a continuous process). A simple file-watcher pattern:</p>
+
+<pre><code>import time
+import asyncio
+
+_model_mtime: float = 0.0
+
+async def watch_model_file():
+    """Background task: reload bundle when the .pkl file changes."""
+    global _bundle, _model_mtime
+    while True:
+        try:
+            mtime = MODEL_PATH.stat().st_mtime
+            if mtime != _model_mtime:
+                new_bundle = ModelBundle.load(MODEL_PATH)
+                _bundle = new_bundle
+                _model_mtime = mtime
+                print(f"Reloaded model, new mtime={mtime}")
+        except Exception as e:
+            print(f"Watch error: {e}")
+        await asyncio.sleep(10)
+
+@app.on_event("startup")
+async def start_watcher():
+    asyncio.create_task(watch_model_file())</code></pre>
+
+            <p>Deploy a new <code>model_bundle.pkl</code> + <code>.sha256</code>, wait 10 seconds, and the API is serving the new model. Zero downtime. Zero restart needed.</p>
+
+            <h2>Step 6: Fall Back Gracefully When the Model Is Missing</h2>
+
+            <p>Production systems must handle the case where the model file isn't there, is corrupted, or has a mismatched hash. Never serve garbage &mdash; either degrade to a sensible fallback or fail loudly.</p>
+
+<pre><code>@app.post("/v1/predict")
+async def predict(req: PredictRequest):
+    if _bundle is None:
+        # Fallback: Elo-based baseline (no ML)
+        elo_diff = req.features.get("elo_diff", 0)
+        fallback_wp = 1.0 / (1.0 + 10 ** (-elo_diff / 400))
+        return PredictResponse(
+            probability=fallback_wp,
+            model_version="fallback:elo",
+            trained_at="n/a",
+        )
+    # Normal path
+    ...</code></pre>
+
+            <p>Log every fallback invocation so you notice when your model is silently missing in prod.</p>
+
+            <h2>Step 7: CI — Test Both Training and Serving</h2>
+
+            <p>Your deploy pipeline should verify:</p>
+
+            <ul>
+                <li>The bundle loads cleanly with integrity check passing</li>
+                <li>Predict returns a value in [0, 1] for a known feature dict</li>
+                <li>Predict latency under some threshold (e.g., &lt; 10ms on CPU)</li>
+                <li>The <code>feature_cols</code> list matches your feature engineering module's output</li>
+            </ul>
+
+<pre><code>import pytest
+import time
+
+def test_bundle_loads():
+    bundle = ModelBundle.load(Path("./model_bundle.pkl"))
+    assert bundle.model is not None
+    assert len(bundle.feature_cols) &gt; 0
+
+def test_predict_returns_valid_probability():
+    bundle = ModelBundle.load(Path("./model_bundle.pkl"))
+    features = {col: 0.0 for col in bundle.feature_cols}
+    p = bundle_predict(bundle, features)
+    assert 0 &lt;= p &lt;= 1
+
+def test_predict_latency_under_threshold():
+    bundle = ModelBundle.load(Path("./model_bundle.pkl"))
+    features = {col: 0.0 for col in bundle.feature_cols}
+    t0 = time.perf_counter()
+    for _ in range(100):
+        bundle_predict(bundle, features)
+    avg_ms = (time.perf_counter() - t0) * 10
+    assert avg_ms &lt; 10, f"Avg latency {avg_ms:.1f}ms exceeds 10ms budget"
+
+def test_feature_cols_match_engineering():
+    from my_pipeline import engineer_features
+    import pandas as pd
+    dummy = pd.DataFrame([{"score": 0, "time": 0}])
+    engineered = engineer_features(dummy)
+    bundle = ModelBundle.load(Path("./model_bundle.pkl"))
+    missing = [c for c in bundle.feature_cols if c not in engineered.columns]
+    assert not missing, f"Features missing from pipeline: {missing}"</code></pre>
+
+            <h2>Production Checklist</h2>
+
+            <ul>
+                <li>[ ] Model saved as a dict with all metadata (features, metrics, calibrator, versions)</li>
+                <li>[ ] Companion <code>.sha256</code> hash file committed alongside the <code>.pkl</code></li>
+                <li>[ ] Integrity verification at load time; crashes loudly on mismatch</li>
+                <li>[ ] Dict-based predict (no brittle positional feature ordering)</li>
+                <li>[ ] File-watcher for zero-downtime model swaps</li>
+                <li>[ ] Graceful fallback when model is missing/corrupt</li>
+                <li>[ ] Health endpoint exposing current model metadata + metrics</li>
+                <li>[ ] CI tests for load, predict, latency, and feature-list parity</li>
+                <li>[ ] Structured logs including model_version on every prediction</li>
+            </ul>
+
+            <div class="cta">
+                <p>Building a model-serving pipeline is a week of work. <strong>ZenHodl's prediction API</strong> is already deployed with all of this — calibrated sports probabilities for 11 sports via REST.</p>
+                <a href="https://zenhodl.net/docs">See the API</a>
+            </div>
+
+            <p>Further reading: <a href="/python-xgboost-probability-calibration/">Calibrating XGBoost Probabilities</a> &middot; <a href="/xgboost-sample-weights/">Sample Weights in XGBoost</a> &middot; <a href="/feature-engineering-sports-win-probability/">Feature Engineering for Sports Win Probability</a></p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">&copy; 2026 CodeFix Solution. All rights reserved.</div>
+    </footer>
+</body>
+</html>

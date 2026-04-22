@@ -1,0 +1,32 @@
+# Disavow file for codefixsolution.com
+# Generated: 2026-04-21
+# Reason: Mass "gameofbet" anchor-text injection across hacked/vulnerable
+# sites. Identical anchor text "gameofbet" appeared across 20+ unrelated
+# domains (universities in Pakistan, Ghana, Ecuador, Poland, Indonesia,
+# Georgia, Colombia; NGOs; fashion/music publishers; IT companies).
+# Pattern is Turkish-gambling negative-SEO or automated link injection.
+# Site itself is not compromised — this is inbound spam targeting us.
+#
+# Upload at: https://search.google.com/search-console/disavow-links
+# Select property: https://codefixsolution.com/ (URL-prefix)
+
+domain:uscaacademy.com
+domain:globalpeacechain.org
+domain:alqadir.edu.pk
+domain:frontrunnermag.com
+domain:softhunters.in
+domain:uniandes.edu.co
+domain:knust.edu.gh
+domain:ctoscredit.com.my
+domain:uleam.edu.ec
+domain:ur.edu.pl
+domain:fashionweekdaily.com
+domain:affinitymagazine.us
+domain:unisri.ac.id
+domain:gtu.ge
+domain:ccmexico.com.mx
+domain:hostingersite.com
+domain:myftpupload.com
+domain:bussur.com
+domain:ac.cd
+domain:amazonaws.com

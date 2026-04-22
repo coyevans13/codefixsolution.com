@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feature Engineering for Sports Win Probability: 15 Features That Actually Matter — CodeFix Solution</title>
+    <meta name="description" content="A practical guide to the features that make a sports win-probability model work. Score diff, time fraction, Elo, momentum, pace — with Python code for each.">
+    <link rel="canonical" href="https://codefixsolution.com/feature-engineering-sports-win-probability/">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 700; margin: 28px 0 12px; color: var(--text); }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; color: #86efac; }
+        strong { color: var(--text); }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: #ccc; }
+        th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>Feature Engineering for Sports Win Probability: 15 Features That Actually Matter</h1>
+            <div class="meta">April 21, 2026 &middot; 13 min read &middot; Python, XGBoost, Feature Engineering</div>
+
+            <p>Your sports win-probability model is only as good as the features you feed it. Most tutorials throw "score_diff, seconds_remaining, and team_id" at a gradient booster and call it done. That model will get 75% accuracy — but the last 10% of accuracy is where trading edge lives, and that 10% comes from feature engineering.</p>
+
+            <p>This post catalogs the 15 features that consistently matter across NBA, NHL, MLB, and esports win-probability models, why each one works, and how to compute each in Python. Every code block is copy-pasteable.</p>
+
+            <h2>The Core 6: You Can't Skip These</h2>
+
+            <h3>1. Score differential (home - away)</h3>
+            <p>The most predictive feature by a wide margin. Use <strong>signed</strong> difference (positive = home leading) so the model learns that a +5 NBA lead with 2 minutes left is very different from a -5 deficit.</p>
+<pre><code>df['score_diff'] = df['home_score'] - df['away_score']</code></pre>
+
+            <h3>2. Seconds remaining</h3>
+            <p>The model needs to know how much runway is left. Use <em>game clock</em> in seconds, normalized only if your game lengths vary.</p>
+<pre><code># NBA: 48 min = 2880s. NHL: 60 min = 3600s. MLB: use outs_remaining instead.
+def seconds_remaining(period, clock_mm_ss, sport):
+    mins, secs = map(int, clock_mm_ss.split(':'))
+    clock_secs = mins * 60 + secs
+    if sport == 'NBA':
+        return max(0, (4 - period) * 720 + clock_secs)
+    elif sport == 'NHL':
+        return max(0, (3 - period) * 1200 + clock_secs)
+    return clock_secs</code></pre>
+
+            <h3>3. Time fraction</h3>
+            <p>Seconds-remaining as a ratio of total game length. Makes late-game states directly comparable to early-game states without hard-coding sport-specific thresholds.</p>
+<pre><code>TOTAL = {'NBA': 2880, 'NHL': 3600}
+df['time_fraction'] = df['seconds_remaining'] / TOTAL[sport]</code></pre>
+
+            <h3>4. Period / Inning</h3>
+            <p>Not redundant with seconds_remaining. A 5-point lead with 2 minutes left in Q2 isn't the same as 2 minutes left in Q4, even though time_fraction is identical. Include as an integer.</p>
+
+            <h3>5. Elo differential</h3>
+            <p>Captures the pre-game skill asymmetry. Compute via rolling Elo update on historical match outcomes; K=32, start_elo=1500. At game time, use (home_elo - away_elo).</p>
+<pre><code>def update_elo(elo_a, elo_b, a_won, k=32):
+    expected_a = 1.0 / (1.0 + 10 ** ((elo_b - elo_a) / 400.0))
+    a_result = 1.0 if a_won else 0.0
+    new_a = elo_a + k * (a_result - expected_a)
+    new_b = elo_b + k * ((1.0 - a_result) - (1.0 - expected_a))
+    return new_a, new_b</code></pre>
+
+            <h3>6. Home indicator / side flag</h3>
+            <p>Home teams win more often than away teams, even after controlling for skill. Include as a binary feature.</p>
+
+            <h2>The Engineered 5: Where Calibration Hides</h2>
+
+            <h3>7. score_diff × time_fraction (interaction)</h3>
+            <p>A 5-point lead at time_fraction=0.9 is nearly guaranteed; at time_fraction=0.1 it's meaningless. A GBM can learn this interaction, but handing it explicitly often improves both training speed and out-of-sample calibration.</p>
+<pre><code>df['score_diff_x_tf'] = df['score_diff'] * df['time_fraction']</code></pre>
+
+            <h3>8. score_diff² (squared)</h3>
+            <p>The relationship between lead size and win probability is non-linear: the marginal impact of extending a 20-point lead to 25 points is much smaller than 5 to 10. Squaring gives the model direct access to this curvature.</p>
+
+            <h3>9. Pre-game WP (prior)</h3>
+            <p>The win probability implied <em>before</em> the game starts, based purely on team strength. For NBA, this typically comes from pre-game markets or Elo. Lock this in at tip-off and use it as a constant feature for all in-game snapshots from that game.</p>
+<pre><code>def pregame_wp_from_elo(home_elo, away_elo, home_advantage=75):
+    # Home advantage: ~75 Elo points in NBA
+    return 1.0 / (1.0 + 10 ** ((away_elo - (home_elo + home_advantage)) / 400.0))</code></pre>
+
+            <h3>10. Pace differential (basketball)</h3>
+            <p>High-pace teams create more possessions, which increases variance. A 10-point lead in a 110-possession game is less safe than the same lead in an 85-possession game. Compute as (home_pace - away_pace) using season-to-date averages.</p>
+
+            <h3>11. Rolling scoring momentum</h3>
+            <p>Captures streaks and runs. Compute as the net scoring differential over a rolling window (120s, 300s typical for basketball).</p>
+<pre><code>def rolling_run_diff(game_events, window_s=120):
+    """Return home_minus_away scoring in the last window_s seconds."""
+    now_t = game_events[-1]['t']
+    cutoff = now_t - window_s
+    recent = [e for e in game_events if e['t'] &gt;= cutoff]
+    return sum(e['delta'] for e in recent)</code></pre>
+
+            <h2>The Sport-Specific 4: Where Real Edge Comes From</h2>
+
+            <h3>12. NHL: Shots on goal differential</h3>
+            <p>SOG differential is predictive of future goal rate above and beyond current score. A team down 0-1 with a 25-10 SOG lead has a real comeback chance; the same deficit with 5-20 SOG is closer to hopeless.</p>
+
+            <h3>13. NHL: Power play state</h3>
+            <p>Goals score at ~5x the rate during a power play. Include (home_pp, away_pp, home_skater_advantage) as binary/integer features.</p>
+
+            <h3>14. MLB: Starter ERA/WHIP differential</h3>
+            <p>For the first 5 innings, starting pitcher quality dominates everything. Include (home_sp_era - away_sp_era), (home_sp_whip - away_sp_whip), and (home_sp_k9 - away_sp_k9).</p>
+
+            <h3>15. MLB: is_home_batting</h3>
+            <p>Binary. Tells the model whether the current inning half is the home team batting. Combined with score_diff and inning count, this captures the "bottom of the ninth with the tying run at bat" state structurally.</p>
+
+            <h2>Features to Avoid</h2>
+
+            <table>
+                <tr><th>Avoid</th><th>Why</th></tr>
+                <tr><td>ESPN's live win probability</td><td>If you train on it, your model learns to agree with the market. You lose independent signal.</td></tr>
+                <tr><td>Attendance, weather, referee ID</td><td>Tiny or zero effect, high cardinality, adds noise.</td></tr>
+                <tr><td>Team one-hot encoded</td><td>Elo already captures team strength. One-hot overfits to roster changes.</td></tr>
+                <tr><td>Raw timestamps</td><td>Teaches the model to memorize specific games. Always derive relative time features.</td></tr>
+            </table>
+
+            <h2>Feature Importance: What a Production Model Actually Weights</h2>
+
+            <p>Typical feature importance distribution for a tuned NBA XGBoost model trained on ~600k in-game snapshots:</p>
+<pre><code>score_diff               0.38
+seconds_remaining        0.19
+time_fraction            0.11
+score_diff_x_tf          0.09
+elo_diff                 0.07
+score_diff_sq            0.06
+pregame_wp               0.04
+run_diff_300s            0.03
+pace_diff                0.02
+run_diff_120s            0.01</code></pre>
+
+            <p>Score diff and time are 70% of the signal. Everything else is getting the last 10% of ECE reduction. But the last 10% is where edge lives — a 1-2pp ECE improvement at the tails (80-90% bucket) is the difference between profitable and breakeven trading.</p>
+
+            <h2>Putting It Together: Feature Pipeline in pandas</h2>
+
+<pre><code>def engineer_features(df: pd.DataFrame, sport: str) -> pd.DataFrame:
+    # Base
+    df['score_diff'] = df['home_score'] - df['away_score']
+    df['seconds_remaining'] = df.apply(
+        lambda r: seconds_remaining(r['period'], r['clock'], sport), axis=1)
+    df['time_fraction'] = df['seconds_remaining'] / TOTAL[sport]
+    df['is_home'] = 1
+
+    # Engineered
+    df['score_diff_x_tf'] = df['score_diff'] * df['time_fraction']
+    df['score_diff_sq']   = df['score_diff'] ** 2
+    df['pregame_wp']      = df.apply(
+        lambda r: pregame_wp_from_elo(r['home_elo'], r['away_elo']), axis=1)
+    df['elo_diff']        = df['home_elo'] - df['away_elo']
+
+    # Basketball pace
+    if sport in ('NBA', 'NCAAMB'):
+        df['pace_diff'] = df['home_pace_s2d'] - df['away_pace_s2d']
+
+    # Hockey SOG
+    if sport == 'NHL':
+        df['sog_diff']  = df['home_sog'] - df['away_sog']
+        df['home_pp']   = df['home_on_pp'].astype(int)
+        df['away_pp']   = df['away_on_pp'].astype(int)
+
+    # MLB starter diff
+    if sport == 'MLB':
+        df['sp_era_diff']  = df['away_sp_era']  - df['home_sp_era']
+        df['sp_whip_diff'] = df['away_sp_whip'] - df['home_sp_whip']
+        df['sp_k9_diff']   = df['home_sp_k9']   - df['away_sp_k9']
+        df['is_home_batting'] = df['is_home_batting'].astype(int)
+
+    return df</code></pre>
+
+            <div class="cta">
+                <p>Don't want to engineer features from scratch? <strong>ZenHodl's prediction API</strong> ships calibrated win probabilities for 11 sports via REST — features already engineered, models already trained.</p>
+                <a href="https://zenhodl.net/docs">See the API docs</a>
+            </div>
+
+            <p>Further reading: <a href="/python-xgboost-probability-calibration/">Calibrating XGBoost Probabilities with Isotonic Regression</a> &middot; <a href="/build-sports-prediction-model-python/">How to Build a Sports Prediction Model with Python</a></p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">&copy; 2026 CodeFix Solution. All rights reserved.</div>
+    </footer>
+</body>
+</html>
