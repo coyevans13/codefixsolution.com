@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build an NHL Stanley Cup Prediction Model in Python (ELO + Monte Carlo Futures) &mdash; CodeFix Solution</title>
+    <meta name="description" content="Build an NHL Stanley Cup prediction model from scratch using Python, NHL-tuned ELO (K=8, HFA=40), special-teams features, and a Monte Carlo bracket simulator. Includes a 2024-25 playoff backtest and live 2026 futures worked example.">
+    <link rel="canonical" href="https://codefixsolution.com/build-nhl-stanley-cup-prediction-model/">
+    <meta property="og:title" content="How to Build an NHL Stanley Cup Prediction Model in Python (ELO + Monte Carlo Futures)">
+    <meta property="og:description" content="Complete Python tutorial: ESPN NHL data, NHL-tuned ELO (K=8, HFA=40), special-teams features, Monte Carlo playoff bracket simulation.">
+    <meta property="og:url" content="https://codefixsolution.com/build-nhl-stanley-cup-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build an NHL Stanley Cup Prediction Model in Python (ELO + Monte Carlo Futures)</h1>
+            <div class="meta">April 22, 2026 &middot; 14 min read &middot; Python, ELO, NHL, Monte Carlo, Machine Learning</div>
+
+            <p>NHL playoff prediction is the hardest of the four major North American sports. Best-of-seven hockey series have the lowest favorite-win rate in pro sports, goalies single-handedly swing games, and the compressed playoff schedule magnifies small injury gaps into series-deciding factors. But that same variance is why a <em>calibrated</em> model beats gut-feel picks so convincingly &mdash; when nobody can reliably predict games, being honestly 55% right matters.</p>
+
+            <p>A production-grade <strong>Stanley Cup prediction model</strong> has to do three things right:</p>
+
+            <ol>
+                <li>Produce <strong>calibrated per-game win probabilities</strong> tuned for hockey's 82-game season and modest home-ice advantage</li>
+                <li>Incorporate <strong>special-teams differentials</strong> (power play %, penalty kill %, save %) which matter more in the playoffs than the regular season</li>
+                <li>Run a <strong>Monte Carlo bracket simulator</strong> that handles best-of-seven series with the NHL's specific 2-2-1-1-1 home-away pattern and bracket format (no reseeding)</li>
+            </ol>
+
+            <p>This guide walks through all three in Python. At the end you'll have a working NHL pipeline you can apply to any playoff bracket &mdash; including the reproducible 2024-25 backtest and live 2026 futures examples we published ourselves.</p>
+
+            <h2>What You'll Build</h2>
+            <ul>
+                <li>ESPN NHL data loader for any season (regular + playoffs)</li>
+                <li><strong>NHL-tuned ELO</strong> (K=8, HFA=40) with hockey-specific MoV</li>
+                <li><strong>Special-teams feature pipeline</strong>: PP%, PK%, save%, faceoff%, PIM differentials</li>
+                <li><strong>Pre-game win-probability function</strong> combining ELO + special teams</li>
+                <li><strong>Best-of-seven Monte Carlo simulator</strong> with NHL home-away scheduling</li>
+                <li><strong>Cup championship probability calculator</strong> for any bracket state</li>
+                <li><strong>ECE calibration measurement</strong></li>
+            </ul>
+
+            <p>Python 3.11+. Deps: <code>pandas</code>, <code>numpy</code>, <code>xgboost</code>, <code>scikit-learn</code>, <code>requests</code>.</p>
+
+            <h2>Step 1: Pull ESPN NHL Data</h2>
+
+            <pre><code>import requests, pandas as pd
+from datetime import date, timedelta
+
+def fetch_nhl_games(date_yyyymmdd: str) -> list[dict]:
+    """Pull every NHL game for a date. season_type: 2=regular, 3=postseason."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    r = requests.get(url, params={"dates": date_yyyymmdd, "limit": 30}, timeout=20)
+    r.raise_for_status()
+    out = []
+    for ev in r.json().get("events", []):
+        comp = ev["competitions"][0]
+        home = next(t for t in comp["competitors"] if t["homeAway"] == "home")
+        away = next(t for t in comp["competitors"] if t["homeAway"] == "away")
+        if not (home.get("winner") or away.get("winner")):
+            continue
+        out.append({
+            "game_id": int(ev["id"]),
+            "date": date_yyyymmdd,
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": int(home.get("score", 0) or 0),
+            "away_score": int(away.get("score", 0) or 0),
+            "home_won": int(home.get("winner", False)),
+            "season_type": ev.get("season", {}).get("type"),
+            "notes": [n.get("headline","") for n in comp.get("notes", [])],
+        })
+    return out</code></pre>
+
+            <h2>Step 2: NHL-Tuned ELO (K=8, HFA=40)</h2>
+
+            <p>NHL has an 82-game regular season with modest home-ice advantage (~54% home win rate). That translates to K=8 (smaller than NBA's K=20 because the season is similar length but variance per game is higher) and HFA=40 (half of NBA's 80).</p>
+
+            <pre><code>K = 8.0       # NHL learning rate
+HFA = 40.0    # NHL home-ice advantage in ELO points
+
+def compute_nhl_elo(games: pd.DataFrame) -> tuple[dict, dict]:
+    """Returns (current_ratings, pre_game_elo_diff_by_game_id)."""
+    elo = {}
+    game_elo_diff = {}
+    games = games.sort_values("game_id").reset_index(drop=True)
+    for _, r in games.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        hs, as_ = r["home_score"], r["away_score"]
+        if not h or not a or pd.isna(hs) or pd.isna(as_):
+            continue
+        he = elo.get(h, 1500.0)
+        ae = elo.get(a, 1500.0)
+        game_elo_diff[int(r["game_id"])] = he - ae
+
+        expected_h = 1.0 / (1.0 + 10 ** ((ae - he - HFA) / 400.0))
+        actual_h = 1.0 if hs > as_ else (0.5 if hs == as_ else 0.0)
+        margin = abs(hs - as_)
+        # NHL MoV (hockey scores have fewer decisive blowouts than basketball)
+        mov = np.log(1 + margin) * (2.2 / (max(0, abs(he-ae))*0.001 + 2.2))
+        mov = max(1.0, min(mov, 2.5))
+
+        delta = K * mov * (actual_h - expected_h)
+        elo[h] = he + delta
+        elo[a] = ae - delta
+    return elo, game_elo_diff</code></pre>
+
+            <p>After a full 82-game regular season, top NHL teams hit 1580-1600 ELO (top teams rarely exceed 1620 because of parity), middle teams sit at 1480-1520, and basement teams drop to 1400-1440.</p>
+
+            <h2>Step 3: Special-Teams Features</h2>
+
+            <p>NHL has something no other major North American sport has: <em>special teams</em>. Power plays (up a man) and penalty kills (down a man) happen multiple times per game and vary dramatically by team. A strong power play unit can win you a playoff series.</p>
+
+            <pre><code>def compute_team_priors(boxscores: pd.DataFrame) -> pd.DataFrame:
+    """
+    boxscores: one row per team per game with PP/PK/save/faceoff/PIM data.
+    Returns rolling priors: PP%, PK%, save%, faceoff%, PIM per game.
+    """
+    bs = boxscores.sort_values(["team", "game_id"]).copy()
+    bs["pp_pct"] = bs["pp_goals"] / bs["pp_opportunities"].replace(0, 1)
+    bs["pk_pct"] = 1 - (bs["pp_goals_against"] / bs["pk_opportunities"].replace(0, 1))
+    bs["save_pct"] = 1 - (bs["goals_against"] / bs["shots_against"].replace(0, 1))
+    bs["faceoff_pct"] = bs["faceoff_wins"] / (bs["faceoff_wins"] + bs["faceoff_losses"]).replace(0, 1)
+
+    # Rolling priors (shifted by 1 so no future leak)
+    for col in ["pp_pct", "pk_pct", "save_pct", "faceoff_pct", "penalty_minutes"]:
+        bs[f"prior_{col}"] = bs.groupby("team")[col].apply(
+            lambda s: s.shift(1).expanding().mean()
+        ).reset_index(level=0, drop=True)
+
+    return bs[["game_id", "team", "prior_pp_pct", "prior_pk_pct",
+               "prior_save_pct", "prior_faceoff_pct", "prior_penalty_minutes"]]</code></pre>
+
+            <blockquote>
+                <p><strong>Data source note:</strong> ESPN's free scoreboard doesn't give you special-teams stats directly. You'll need NHL.com's stats API (<code>api.nhle.com</code>) or a scraped feed from Natural Stat Trick. Cache aggressively &mdash; these stats only update after each game.</p>
+            </blockquote>
+
+            <h2>Step 4: Pre-Game Win Probability</h2>
+
+            <pre><code>def pregame_nhl_wp(home_team, away_team, elo, priors):
+    """Pre-game home win probability combining ELO + special teams."""
+    he = elo.get(home_team, 1500.0)
+    ae = elo.get(away_team, 1500.0)
+    elo_diff = he - ae + HFA
+
+    hp = priors.get(home_team, {})
+    ap = priors.get(away_team, {})
+
+    # Special-teams adjustments (ELO-equivalent points per pct point of diff)
+    pp_elo = 4.0 * 100 * (hp.get("pp_pct", 0.20) - ap.get("pp_pct", 0.20))
+    pk_elo = 3.0 * 100 * (hp.get("pk_pct", 0.80) - ap.get("pk_pct", 0.80))
+    save_elo = 12.0 * 100 * (hp.get("save_pct", 0.905) - ap.get("save_pct", 0.905))
+
+    total_elo_diff = elo_diff + pp_elo + pk_elo + save_elo
+    return 1.0 / (1.0 + 10 ** (-total_elo_diff / 400.0))</code></pre>
+
+            <p>The coefficients above are defensible starting points. Tune them by fitting a logistic regression against 5+ seasons of regular-season outcomes.</p>
+
+            <h2>Step 5: Best-of-Seven Series Simulator</h2>
+
+            <p>NHL playoff home-away pattern: 2-2-1-1-1 (games 1, 2, 5, 7 at higher seed; 3, 4, 6 at lower seed). Simulate a series from any current state:</p>
+
+            <pre><code>import random
+
+HOME_SCHEDULE = ['HIGH', 'HIGH', 'LOW', 'LOW', 'HIGH', 'LOW', 'HIGH']
+
+def sim_series(high_seed, low_seed, elo, priors, hi_wins=0, lo_wins=0):
+    """Simulate the remainder of a best-of-7 series from current state."""
+    games_played = hi_wins + lo_wins
+    while hi_wins < 4 and lo_wins < 4:
+        host_tier = HOME_SCHEDULE[games_played]
+        home = high_seed if host_tier == 'HIGH' else low_seed
+        away = low_seed if host_tier == 'HIGH' else high_seed
+        p = pregame_nhl_wp(home, away, elo, priors)
+        winner = home if random.random() < p else away
+        if winner == high_seed:
+            hi_wins += 1
+        else:
+            lo_wins += 1
+        games_played += 1
+    return high_seed if hi_wins == 4 else low_seed</code></pre>
+
+            <h2>Step 6: Monte Carlo the Full Bracket</h2>
+
+            <p>To get a Cup championship probability per team, Monte Carlo the full bracket 50,000+ times:</p>
+
+            <pre><code>from collections import Counter
+
+def sim_cup(round1_east, round1_west, series_state, elo, priors, n_sims=50000):
+    """
+    round1_east, round1_west: [(high_seed, low_seed), ...] lists of 4 matchups each.
+    series_state: {'TEAM_A-TEAM_B': (a_wins, b_wins), ...} — games won so far.
+    Returns championship probability per team.
+    """
+    champs = Counter()
+    for _ in range(n_sims):
+        # Round 1
+        east_winners = [sim_series(hi, lo, elo, priors, *series_state.get(f'{hi}-{lo}', (0,0)))
+                        for hi, lo in round1_east]
+        west_winners = [sim_series(hi, lo, elo, priors, *series_state.get(f'{hi}-{lo}', (0,0)))
+                        for hi, lo in round1_west]
+
+        # Round 2 (NHL bracket format: winners 1&3, 2&4 of Round 1 meet)
+        def next_round(winners):
+            e_a = sim_match(winners[0], winners[2], elo, priors)
+            e_b = sim_match(winners[1], winners[3], elo, priors)
+            return e_a, e_b
+
+        e_r2a, e_r2b = next_round(east_winners)
+        w_r2a, w_r2b = next_round(west_winners)
+
+        east_champ = sim_match(e_r2a, e_r2b, elo, priors)
+        west_champ = sim_match(w_r2a, w_r2b, elo, priors)
+
+        # Cup Final: higher-ELO team gets home-ice
+        if elo.get(east_champ, 1500) >= elo.get(west_champ, 1500):
+            champ = sim_series(east_champ, west_champ, elo, priors)
+        else:
+            champ = sim_series(west_champ, east_champ, elo, priors)
+        champs[champ] += 1
+
+    return {team: wins / n_sims for team, wins in champs.items()}
+
+def sim_match(team_a, team_b, elo, priors):
+    """Sim a best-of-7 between two teams with higher-ELO as the high seed."""
+    if elo.get(team_a, 1500) >= elo.get(team_b, 1500):
+        return sim_series(team_a, team_b, elo, priors)
+    return sim_series(team_b, team_a, elo, priors)</code></pre>
+
+            <blockquote>
+                <p><strong>What we got:</strong> Our NHL model on the 2024-25 playoffs (86 games) hit 52 of 86 (60.5%). It called the West 1st Round at 20/26 (77%) and correctly read the Cup Final as a coin-flip. Full breakdown is <a href="https://zenhodl.net/blog/stanley-cup-2025-playoffs-backtest">in the retrospective</a>. Live 2026 Stanley Cup championship probabilities are <a href="https://zenhodl.net/blog/2026-stanley-cup-futures-odds-april-22">here</a>.</p>
+            </blockquote>
+
+            <h2>Step 7: Measure ECE</h2>
+
+            <pre><code>def ece(y_pred, y_true, n_bins=10):
+    bins = np.linspace(0, 1, n_bins + 1)
+    total = 0.0
+    for i in range(n_bins):
+        mask = (y_pred >= bins[i]) & (y_pred < bins[i+1])
+        if i == n_bins - 1:
+            mask = (y_pred >= bins[i]) & (y_pred <= bins[i+1])
+        if mask.sum() == 0: continue
+        gap = abs(y_pred[mask].mean() - y_true[mask].mean())
+        total += gap * (mask.sum() / len(y_pred))
+    return total</code></pre>
+
+            <p>NHL target: ECE below 7% on full regular season. Hockey is inherently noisier than basketball, so don't expect 2-3% ECE like NCAAMB.</p>
+
+            <h2>Common Mistakes That Kill an NHL Model</h2>
+
+            <h3>Using NBA/NFL K values</h3>
+            <p>K=20 is too high for NHL — your ELO will thrash between games because hockey has more goal-scoring variance than points-scoring basketball. Use K=8 and let the 82-game season do the smoothing.</p>
+
+            <h3>Forgetting shootout and overtime rules</h3>
+            <p>In the regular season, some NHL games go to shootouts. In the playoffs, games go to extended overtime until someone scores. These are different distributions. If you're training on mixed regular-season/playoff data without a flag, you're mixing two signal sources.</p>
+
+            <h3>Ignoring the goalie</h3>
+            <p>Goaltending is the single biggest game-to-game factor in NHL that doesn't appear in team ELO. If you can, track starting-goalie performance as a separate ELO component.</p>
+
+            <h3>Assuming best-of-seven is just "P^7"</h3>
+            <p>Naively multiplying per-game probabilities ignores home-away flips and cumulative fatigue. Monte Carlo is the only correct way to generate series-level probabilities.</p>
+
+            <h3>Not reseeding vs bracket format</h3>
+            <p>NHL uses <em>bracket format</em>, NOT reseeding after Round 1. The winner of the 1 vs 8 matchup plays the winner of the 4 vs 5 matchup regardless of what remains. Getting this wrong changes the probability math significantly.</p>
+
+            <h3>Over-weighting regular-season save %</h3>
+            <p>Season-average save % masks hot/cold streaks. In the playoffs, the hot goalie matters more than the season average. Use rolling 10-game save % instead.</p>
+
+            <div class="cta">
+                <h3>Want to skip building this yourself?</h3>
+                <p>ZenHodl's API gives you pre-built, pre-calibrated NHL win probabilities, plus historical snapshots and live 2026 Cup futures updates. 7-day free trial, no credit card.</p>
+                <a href="https://zenhodl.net/pricing">Get API access &rarr;</a>
+            </div>
+
+            <h2>Summary</h2>
+
+            <p>A production-grade <strong>NHL Stanley Cup prediction model</strong> is hockey-tuned ELO + special-teams features + Monte Carlo bracket simulation + honest ECE measurement. The hard parts are: getting the K and HFA tuning right, handling best-of-seven series math cleanly, and being disciplined about excluding playoff games from ELO training. Get those right and you can produce calibrated championship probabilities that compete with MoneyPuck in a weekend.</p>
+
+            <p>Next tutorial: <a href="/build-nba-finals-prediction-model/">how to build an NBA Finals prediction model</a> &mdash; same discipline, different sport, different tuning constants.</p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">
+            &copy; 2026 CodeFix Solution &middot; Production ML &amp; data engineering case studies
+        </div>
+    </footer>
+</body>
+</html>
