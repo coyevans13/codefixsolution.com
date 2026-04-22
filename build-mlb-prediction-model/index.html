@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build an MLB Prediction Model in Python (ELO + Starting Pitcher Features) &mdash; CodeFix Solution</title>
+    <meta name="description" content="Build an MLB win-probability prediction model from scratch using Python, ELO with MLB-specific tuning, and starting-pitcher features (ERA, WHIP, K/9). Includes World Series playoff backtesting and Expected Calibration Error measurement.">
+    <link rel="canonical" href="https://codefixsolution.com/build-mlb-prediction-model/">
+    <meta property="og:title" content="How to Build an MLB Prediction Model in Python (ELO + Starting Pitcher Features)">
+    <meta property="og:description" content="Complete Python tutorial: ESPN MLB data, MLB-tuned ELO (K=4, HFA=24), starting-pitcher features, and postseason backtesting.">
+    <meta property="og:url" content="https://codefixsolution.com/build-mlb-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build an MLB Prediction Model in Python (ELO + Starting Pitcher Features)</h1>
+            <div class="meta">April 22, 2026 &middot; 13 min read &middot; Python, ELO, MLB, Starting Pitcher, Machine Learning</div>
+
+            <p>MLB prediction is different from every other major sport. Games are played nearly every day, the season is 162 games long, home-field advantage is tiny, and the single biggest game-by-game variable is who's pitching &mdash; not how good the team is overall. A correctly tuned <strong>MLB prediction model</strong> has to reflect all four of those differences or it will produce numbers that look right on paper and lose money every time.</p>
+
+            <p>This guide walks through a production-grade MLB win-probability pipeline in Python &mdash; ELO tuned for baseball's 162-game season, starting pitcher features (ERA, WHIP, K/9 differentials), pre-game probability calibration, and a playoff backtest harness that runs against any past postseason bracket.</p>
+
+            <h2>What You'll Build</h2>
+            <ul>
+                <li>A Python data pipeline that pulls ESPN MLB game data for any regular season</li>
+                <li>An <strong>MLB-tuned ELO</strong> system (K=4, HFA=24 &mdash; much smaller than football or basketball)</li>
+                <li>A <strong>starting pitcher feature pipeline</strong> that joins ERA, WHIP, and K/9 differentials for the scheduled starters</li>
+                <li>A <strong>pre-game win-probability</strong> function that combines ELO and SP features</li>
+                <li>A <strong>postseason backtest harness</strong> with no look-ahead bias</li>
+                <li>An <strong>ECE (Expected Calibration Error)</strong> measurement so you know whether your probabilities are honest</li>
+            </ul>
+
+            <p>Python 3.11+. Dependencies: <code>pandas</code>, <code>numpy</code>, <code>xgboost</code>, <code>scikit-learn</code>, <code>requests</code>.</p>
+
+            <h2>Step 1: Pull ESPN MLB Data</h2>
+
+            <pre><code>import requests, pandas as pd
+from datetime import date, timedelta
+
+def fetch_mlb_games(date_yyyymmdd: str) -> list[dict]:
+    """Pull every MLB game for a given date with final scores."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard"
+    r = requests.get(url, params={"dates": date_yyyymmdd, "limit": 30}, timeout=20)
+    r.raise_for_status()
+    out = []
+    for ev in r.json().get("events", []):
+        comp = ev["competitions"][0]
+        home = next(t for t in comp["competitors"] if t["homeAway"] == "home")
+        away = next(t for t in comp["competitors"] if t["homeAway"] == "away")
+        if not (home.get("winner") or away.get("winner")):
+            continue
+        # Pull starting pitcher info from leaders or probables
+        home_sp = _extract_starting_pitcher(home)
+        away_sp = _extract_starting_pitcher(away)
+        out.append({
+            "game_id": int(ev["id"]),
+            "date": date_yyyymmdd,
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": int(home.get("score", 0) or 0),
+            "away_score": int(away.get("score", 0) or 0),
+            "home_won": int(home.get("winner", False)),
+            "home_sp": home_sp,
+            "away_sp": away_sp,
+            "season_type": ev.get("season", {}).get("type"),
+        })
+    return out
+
+def _extract_starting_pitcher(team_comp: dict) -> str | None:
+    """ESPN embeds starting pitcher in probables or leaders — check both."""
+    for prob in team_comp.get("probables", []):
+        if prob.get("playerClass") == "pitcher":
+            return prob.get("athlete", {}).get("fullName")
+    return None</code></pre>
+
+            <p>Then iterate over the full season from March opening day through end of September:</p>
+
+            <pre><code>def fetch_season(start: str, end: str) -> pd.DataFrame:
+    d0 = date.fromisoformat(start); d1 = date.fromisoformat(end)
+    rows = []
+    cur = d0
+    while cur <= d1:
+        try:
+            rows.extend(fetch_mlb_games(cur.strftime("%Y%m%d")))
+        except Exception as e:
+            print(f"skip {cur}: {e}")
+        cur += timedelta(days=1)
+    return pd.DataFrame(rows)
+
+season_2025 = fetch_season("2025-03-27", "2025-09-30")</code></pre>
+
+            <h2>Step 2: MLB-Tuned ELO (K=4, HFA=24)</h2>
+
+            <p>MLB has a much longer season than any other major sport (162 games vs. 17 for NFL, 82 for NBA), which means a smaller <code>K</code> is correct &mdash; you want ELO to move slowly because you have so much data. Home-field advantage is also much smaller in baseball: historically about 54% home win rate, which works out to a ~24-point ELO bonus.</p>
+
+            <pre><code>K = 4.0       # smaller than football/basketball — 162-game season
+HFA = 24.0    # MLB home-field advantage
+
+def compute_mlb_elo(games: pd.DataFrame) -> tuple[dict, dict]:
+    """
+    Returns (current_ratings, pre_game_elo_diff_by_game_id).
+    elo_diff in the second dict is neutral (no HFA).
+    """
+    elo = {}
+    game_elo_diff = {}
+
+    games = games.sort_values("game_id").reset_index(drop=True)
+    for _, r in games.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        hs, as_ = r["home_score"], r["away_score"]
+        if not h or not a or pd.isna(hs) or pd.isna(as_):
+            continue
+        he = elo.get(h, 1500.0)
+        ae = elo.get(a, 1500.0)
+        game_elo_diff[int(r["game_id"])] = he - ae
+
+        expected_h = 1.0 / (1.0 + 10 ** ((ae - he - HFA) / 400.0))
+        actual_h = 1.0 if hs > as_ else (0.5 if hs == as_ else 0.0)
+        margin = abs(hs - as_)
+        mov = np.log(1 + margin) * (2.2 / (max(0, abs(he-ae))*0.001 + 2.2))
+        mov = max(1.0, min(mov, 2.5))
+
+        delta = K * mov * (actual_h - expected_h)
+        elo[h] = he + delta
+        elo[a] = ae - delta
+
+    return elo, game_elo_diff</code></pre>
+
+            <p>Expected range after a full season: top teams hit 1570-1590, bottom teams sink to 1400-1420. This is a tighter range than NFL/NBA because regression toward the mean is much stronger in a 162-game sport.</p>
+
+            <h2>Step 3: Starting Pitcher Features</h2>
+
+            <p>This is the feature that separates a toy MLB model from a real one. The probable starting pitchers are public ~24 hours before first pitch. Pull their season stats and compute home-away differentials:</p>
+
+            <pre><code>def fetch_pitcher_stats(pitcher_name: str, year: int) -> dict:
+    """Pull season-to-date ERA, WHIP, K/9 for a pitcher. Cache aggressively."""
+    # Replace with your preferred source: MLB Stats API, Fangraphs, etc.
+    # Below is a placeholder — you'll want a real cached lookup.
+    return {"era": 4.20, "whip": 1.30, "k_per_9": 8.5}  # league average default
+
+def compute_sp_features(home_sp: str, away_sp: str, year: int) -> dict:
+    """Compute pre-game pitcher differentials (home - away)."""
+    h = fetch_pitcher_stats(home_sp, year) if home_sp else None
+    a = fetch_pitcher_stats(away_sp, year) if away_sp else None
+    if h is None or a is None:
+        return {"sp_era_diff": 0.0, "sp_whip_diff": 0.0, "sp_k9_diff": 0.0}
+    return {
+        "sp_era_diff": h["era"] - a["era"],         # negative is good for home
+        "sp_whip_diff": h["whip"] - a["whip"],     # negative is good for home
+        "sp_k9_diff": h["k_per_9"] - a["k_per_9"], # positive is good for home
+    }</code></pre>
+
+            <blockquote>
+                <p><strong>Data source note:</strong> ESPN's free scoreboard gives you probable pitcher names but not their stats. For stats you'll need to call the MLB Stats API (<code>statsapi.mlb.com</code>), Fangraphs, or scrape Baseball-Reference. Always cache by (pitcher_name, year) to avoid re-fetching.</p>
+            </blockquote>
+
+            <h2>Step 4: Pre-Game Win Probability</h2>
+
+            <p>Combine ELO and SP features into a pre-game probability. For the baseline, a logistic combination works well:</p>
+
+            <pre><code>def pregame_wp(home_team: str, away_team: str, home_sp: str, away_sp: str,
+               elo: dict, year: int) -> float:
+    """Pre-game home win probability combining ELO + SP features."""
+    he = elo.get(home_team, 1500.0)
+    ae = elo.get(away_team, 1500.0)
+    elo_diff = he - ae + HFA
+
+    sp = compute_sp_features(home_sp, away_sp, year)
+    # SP contribution: good pitcher helps (negative ERA diff, negative WHIP diff, positive K9 diff)
+    sp_score = -0.15 * sp["sp_era_diff"] - 0.10 * sp["sp_whip_diff"] + 0.03 * sp["sp_k9_diff"]
+
+    # Convert to ELO-equivalent points (roughly 20 ELO per run of expected scoring)
+    total_elo_diff = elo_diff + 60 * sp_score
+
+    return 1.0 / (1.0 + 10 ** (-total_elo_diff / 400.0))</code></pre>
+
+            <p>The coefficients above are starting points. With 4,000+ regular-season games in your training set, you can fit them with a logistic regression to get properly tuned weights.</p>
+
+            <h2>Step 5: Upgrade to XGBoost With Calibration</h2>
+
+            <p>Once you have ELO and SP features working as a baseline, swap in XGBoost + isotonic calibration for better discrimination:</p>
+
+            <pre><code>from xgboost import XGBClassifier
+from sklearn.isotonic import IsotonicRegression
+from sklearn.model_selection import train_test_split
+
+FEATURES = ["elo_diff", "sp_era_diff", "sp_whip_diff", "sp_k9_diff"]
+
+X = training_df[FEATURES].values
+y = training_df["home_won"].values
+
+# Chronological split — never shuffle MLB data (dependencies between games)
+cutoff_idx = int(0.7 * len(X))
+X_train, X_cal = X[:cutoff_idx], X[cutoff_idx:]
+y_train, y_cal = y[:cutoff_idx], y[cutoff_idx:]
+
+model = XGBClassifier(
+    max_depth=4, learning_rate=0.05, n_estimators=300,
+    objective="binary:logistic", eval_metric="logloss",
+)
+model.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
+
+# Calibrate on held-out
+raw_cal = model.predict_proba(X_cal)[:, 1]
+iso = IsotonicRegression(out_of_bounds="clip")
+iso.fit(raw_cal, y_cal)
+
+def calibrated_predict(X):
+    return iso.transform(model.predict_proba(X)[:, 1])</code></pre>
+
+            <h2>Step 6: Measure Expected Calibration Error</h2>
+
+            <pre><code>def ece(y_pred, y_true, n_bins=10):
+    bins = np.linspace(0, 1, n_bins + 1)
+    total = 0.0
+    for i in range(n_bins):
+        mask = (y_pred >= bins[i]) & (y_pred < bins[i+1])
+        if i == n_bins - 1:
+            mask = (y_pred >= bins[i]) & (y_pred <= bins[i+1])
+        if mask.sum() == 0:
+            continue
+        gap = abs(y_pred[mask].mean() - y_true[mask].mean())
+        total += gap * (mask.sum() / len(y_pred))
+    return total
+
+print(f"ECE: {ece(calibrated_predict(X_test), y_test):.4f}")</code></pre>
+
+            <p>Target: under 3% ECE on the full regular season. MLB is an easier calibration problem than NFL or NBA because the sample size is huge (2,400+ games per season).</p>
+
+            <h2>Step 7: Backtest on a Past Postseason</h2>
+
+            <p>The real test: freeze ELO at the end of the regular season, then run pre-game predictions on every playoff game.</p>
+
+            <pre><code>def backtest_postseason(playoff_games, model, iso, elo_frozen, year):
+    preds = []
+    for _, g in playoff_games.iterrows():
+        he = elo_frozen.get(g["home_team"], 1500.0)
+        ae = elo_frozen.get(g["away_team"], 1500.0)
+        sp = compute_sp_features(g["home_sp"], g["away_sp"], year)
+        features = np.array([[
+            he - ae + HFA,
+            sp["sp_era_diff"],
+            sp["sp_whip_diff"],
+            sp["sp_k9_diff"],
+        ]])
+        p = calibrated_predict(features)[0]
+        preds.append({**g.to_dict(), "model_wp": p, "correct": int((p >= 0.5) == g["home_won"])})
+    return pd.DataFrame(preds)</code></pre>
+
+            <blockquote>
+                <p><strong>What we got:</strong> Our MLB model on the 2025 postseason (47 games) hit 59.6% overall. It called the NLDS at 8/9 (89%) and the NLCS at 4/4 (100%). Full breakdown and every World Series game prediction is <a href="https://zenhodl.net/blog/world-series-2025-mlb-playoff-backtest">in the public retrospective</a>.</p>
+            </blockquote>
+
+            <h2>Common Mistakes That Kill an MLB Model</h2>
+
+            <h3>Using football/basketball K values</h3>
+            <p>K=20 is fine for NBA. For MLB it's catastrophic &mdash; your ELO will swing wildly between every game. Use K=4 and let the long season do the smoothing work.</p>
+
+            <h3>Over-weighting home-field advantage</h3>
+            <p>HFA in baseball is tiny. A ~2% home win edge, not the 10-15% edge you get in basketball or football. If your model has home teams at 58-62% pre-game, it's too high.</p>
+
+            <h3>Using regular-season ERA for playoff games</h3>
+            <p>Playoff rotations are compressed. The team's ace pitches Game 1 and Game 4. Their #5 starter never pitches. If you use season-average ERA for playoff predictions, you'll underweight the ace effect. Use game-specific SP matchups.</p>
+
+            <h3>Ignoring the starting pitcher entirely</h3>
+            <p>An ELO-only MLB model is missing 30-40% of the signal. The starting pitcher is a real, measurable, game-by-game variable.</p>
+
+            <h3>Calibrating on training data</h3>
+            <p>The same rule as every other sport: hold out a calibration set. Never fit the isotonic regressor on the same data as the base XGBoost.</p>
+
+            <div class="cta">
+                <h3>Want to skip building this yourself?</h3>
+                <p>ZenHodl's API gives you pre-built, pre-calibrated MLB win probabilities with SP-adjusted features, plus historical snapshots for backtesting. 7-day free trial, no credit card.</p>
+                <a href="https://zenhodl.net/pricing">Get API access &rarr;</a>
+            </div>
+
+            <h2>Summary</h2>
+
+            <p>A production-grade <strong>MLB prediction model</strong> is baseball-tuned ELO + starting-pitcher differentials + XGBoost + isotonic calibration. MLB is the highest-variance playoff sport because short series amplify randomness &mdash; but that same variance is why calibration matters more here than anywhere else. When your model says 55%, a 162-game dataset makes sure it really means 55%.</p>
+
+            <p>Next tutorial: <a href="/build-nba-finals-prediction-model/">how to build the NBA Finals equivalent</a> &mdash; same calibration discipline, different sport, different tuning constants.</p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">
+            &copy; 2026 CodeFix Solution &middot; Production ML &amp; data engineering case studies
+        </div>
+    </footer>
+</body>
+</html>

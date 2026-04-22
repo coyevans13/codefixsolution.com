@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build an NBA Finals Prediction Model in Python (ELO + Pace/ORTG/DRTG) &mdash; CodeFix Solution</title>
+    <meta name="description" content="Build an NBA playoff prediction model from scratch using Python, NBA-tuned ELO, pace/ORTG/DRTG priors, and XGBoost with isotonic calibration. Includes a 2024-25 NBA Finals backtest harness and Expected Calibration Error measurement.">
+    <link rel="canonical" href="https://codefixsolution.com/build-nba-finals-prediction-model/">
+    <meta property="og:title" content="How to Build an NBA Finals Prediction Model in Python (ELO + Pace/ORTG/DRTG)">
+    <meta property="og:description" content="Complete Python tutorial: ESPN NBA data, NBA-tuned ELO (K=20, HFA=80), efficiency priors, XGBoost + isotonic calibration, and playoff backtesting.">
+    <meta property="og:url" content="https://codefixsolution.com/build-nba-finals-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build an NBA Finals Prediction Model in Python (ELO + Pace/ORTG/DRTG)</h1>
+            <div class="meta">April 22, 2026 &middot; 14 min read &middot; Python, ELO, NBA, Efficiency Priors, Machine Learning</div>
+
+            <p>NBA playoff prediction is different from every other sport in three specific ways: best-of-seven series reduce variance (a better team really does win more often), home-court advantage is huge (~80 ELO points), and advanced efficiency metrics &mdash; pace, offensive rating, defensive rating &mdash; are available cheaply and matter more than they do in football or baseball.</p>
+
+            <p>A production-grade <strong>NBA Finals prediction model</strong> has to do three things the shortcut versions won't:</p>
+
+            <ol>
+                <li>Produce <strong>calibrated pre-series win probabilities</strong> for each playoff matchup &mdash; when it says 70%, that team should win the series ~70% of the time</li>
+                <li>Weight <strong>pace, ORTG, and DRTG</strong> differentials alongside pure ELO, since NBA style matchups matter</li>
+                <li>Handle <strong>best-of-seven series math</strong> correctly by simulating game-by-game with home/away flips</li>
+            </ol>
+
+            <p>This guide walks through all three in Python using ESPN's free NBA data feed, <code>pandas</code>, <code>xgboost</code>, and <code>scikit-learn</code>. At the end you'll have a pipeline that predicts individual games and the full playoff bracket &mdash; including a reproducible 2024-25 NBA Finals backtest we ran and published ourselves.</p>
+
+            <h2>What You'll Build</h2>
+            <ul>
+                <li>ESPN NBA data loader for any season (regular + playoffs)</li>
+                <li><strong>NBA-tuned ELO</strong> (K=20, HFA=80) with basketball-style margin-of-victory scaling</li>
+                <li><strong>Team efficiency priors</strong>: rolling-to-date pace, ORTG, DRTG</li>
+                <li><strong>Pre-game win probability function</strong> that combines ELO + efficiency differentials</li>
+                <li><strong>Best-of-seven series simulator</strong> (Monte Carlo, 10k+ trials)</li>
+                <li><strong>Playoff backtest harness</strong> with no look-ahead bias</li>
+                <li><strong>ECE calibration measurement</strong></li>
+            </ul>
+
+            <p>Python 3.11+. Deps: <code>pandas</code>, <code>numpy</code>, <code>xgboost</code>, <code>scikit-learn</code>, <code>requests</code>.</p>
+
+            <h2>Step 1: Pull ESPN NBA Data</h2>
+
+            <pre><code>import requests, pandas as pd
+from datetime import date, timedelta
+
+def fetch_nba_games(date_yyyymmdd: str) -> list[dict]:
+    """Pull every NBA game for a date. season_type: 2=regular, 3=postseason."""
+    url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+    r = requests.get(url, params={"dates": date_yyyymmdd, "limit": 30}, timeout=20)
+    r.raise_for_status()
+    out = []
+    for ev in r.json().get("events", []):
+        comp = ev["competitions"][0]
+        home = next(t for t in comp["competitors"] if t["homeAway"] == "home")
+        away = next(t for t in comp["competitors"] if t["homeAway"] == "away")
+        if not (home.get("winner") or away.get("winner")):
+            continue
+        out.append({
+            "game_id": int(ev["id"]),
+            "date": date_yyyymmdd,
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": int(home.get("score", 0) or 0),
+            "away_score": int(away.get("score", 0) or 0),
+            "home_won": int(home.get("winner", False)),
+            "season_type": ev.get("season", {}).get("type"),
+            "notes": [n.get("headline","") for n in comp.get("notes", [])],
+        })
+    return out
+
+def fetch_nba_season(start: str, end: str) -> pd.DataFrame:
+    d0 = date.fromisoformat(start); d1 = date.fromisoformat(end)
+    rows = []
+    cur = d0
+    while cur <= d1:
+        try:
+            rows.extend(fetch_nba_games(cur.strftime("%Y%m%d")))
+        except Exception as e:
+            print(f"skip {cur}: {e}")
+        cur += timedelta(days=1)
+    return pd.DataFrame(rows)</code></pre>
+
+            <h2>Step 2: NBA-Tuned ELO (K=20, HFA=80)</h2>
+
+            <p>NBA has a 82-game regular season, which is short enough that ELO needs to move meaningfully after each game (K=20) but long enough that priors stabilize by mid-season. Home-court advantage is strong &mdash; historically ~60% home win rate, which is a 80-point ELO bump.</p>
+
+            <pre><code>K = 20.0      # NBA learning rate
+HFA = 80.0    # NBA home-court advantage in ELO points
+
+def compute_nba_elo(games: pd.DataFrame) -> tuple[dict, dict]:
+    """Returns (current_ratings, pre_game_elo_diff_by_game_id — neutral, no HFA)."""
+    elo = {}
+    game_elo_diff = {}
+    games = games.sort_values("game_id").reset_index(drop=True)
+    for _, r in games.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        hs, as_ = r["home_score"], r["away_score"]
+        if not h or not a or pd.isna(hs) or pd.isna(as_):
+            continue
+        he = elo.get(h, 1500.0)
+        ae = elo.get(a, 1500.0)
+        game_elo_diff[int(r["game_id"])] = he - ae
+
+        expected_h = 1.0 / (1.0 + 10 ** ((ae - he - HFA) / 400.0))
+        actual_h = 1.0 if hs > as_ else (0.5 if hs == as_ else 0.0)
+        margin = abs(hs - as_)
+        # Basketball MoV (FiveThirtyEight formula)
+        mov = ((margin + 3) ** 0.8) / (7.5 + 0.006 * max(0, abs(he-ae)))
+        mov = max(1.0, min(mov, 2.5))
+        delta = K * mov * (actual_h - expected_h)
+        elo[h] = he + delta
+        elo[a] = ae - delta
+    return elo, game_elo_diff</code></pre>
+
+            <p>After a full regular season, top teams hit 1750-1800 ELO (OKC was at 1782 entering the 2024-25 playoffs), playoff-bubble teams sit around 1500-1550, and bottom teams drop to 1300-1400.</p>
+
+            <h2>Step 3: Team Efficiency Priors (Pace, ORTG, DRTG)</h2>
+
+            <p>ELO is a single-number rating. For NBA matchups you want more: does a fast team beat a slow team? Is a great offense strong enough to overcome a great defense? These are captured by pace, offensive rating (ORTG), and defensive rating (DRTG).</p>
+
+            <pre><code>def compute_nba_team_priors(boxscores: pd.DataFrame) -> pd.DataFrame:
+    """
+    boxscores: one row per team per game with possessions, points_for, points_against.
+    Returns rolling priors: pace (poss/48 min), ORTG (pts/100 poss), DRTG (opp pts/100 poss).
+    """
+    bs = boxscores.sort_values(["team", "game_id"]).copy()
+    bs["poss_per_48"] = bs["possessions"] * (48.0 / bs["minutes_played"])
+    bs["ortg"] = 100.0 * bs["points_for"] / bs["possessions"]
+    bs["drtg"] = 100.0 * bs["points_against"] / bs["possessions"]
+
+    # Rolling mean, expanding window, shifted by 1 so we never see the current game
+    for col in ["poss_per_48", "ortg", "drtg"]:
+        bs[f"prior_{col}"] = bs.groupby("team")[col].apply(
+            lambda s: s.shift(1).expanding().mean()
+        ).reset_index(level=0, drop=True)
+
+    return bs[["game_id", "team", "prior_poss_per_48", "prior_ortg", "prior_drtg"]]</code></pre>
+
+            <blockquote>
+                <p><strong>The shift is critical.</strong> <code>.shift(1).expanding().mean()</code> means on game <em>n</em>, the prior is computed from games 1 through <em>n-1</em>. Never including game <em>n</em>. If you skip the shift, you leak the future into your features and your training ECE looks amazing while your production ECE collapses.</p>
+            </blockquote>
+
+            <h2>Step 4: Pre-Game Win Probability</h2>
+
+            <p>Combine ELO and efficiency priors:</p>
+
+            <pre><code>def pregame_nba_wp(home_team, away_team, elo, priors_by_team):
+    """Pre-game home win probability combining ELO + efficiency diffs."""
+    he = elo.get(home_team, 1500.0)
+    ae = elo.get(away_team, 1500.0)
+    elo_diff = he - ae + HFA
+
+    hp = priors_by_team.get(home_team, {"pace": 100, "ortg": 115, "drtg": 115})
+    ap = priors_by_team.get(away_team, {"pace": 100, "ortg": 115, "drtg": 115})
+
+    # Efficiency differentials roughly translate to ELO points at these coefficients
+    # (tune via logistic regression on your training set)
+    ortg_elo = 3.0 * (hp["ortg"] - ap["ortg"])       # +1 ORTG ≈ +3 ELO
+    drtg_elo = -3.0 * (hp["drtg"] - ap["drtg"])      # lower DRTG is better
+    pace_elo = 0.5 * (hp["pace"] - ap["pace"])       # pace fit is minor
+
+    total_elo_diff = elo_diff + ortg_elo + drtg_elo + pace_elo
+    return 1.0 / (1.0 + 10 ** (-total_elo_diff / 400.0))</code></pre>
+
+            <h2>Step 5: Upgrade to XGBoost With Calibration</h2>
+
+            <pre><code>from xgboost import XGBClassifier
+from sklearn.isotonic import IsotonicRegression
+
+FEATURES = ["elo_diff", "pace_diff", "ortg_diff", "drtg_diff"]
+
+X = training_df[FEATURES].values
+y = training_df["home_won"].values
+
+cutoff = int(0.7 * len(X))
+X_train, X_cal = X[:cutoff], X[cutoff:]
+y_train, y_cal = y[:cutoff], y[cutoff:]
+
+model = XGBClassifier(
+    max_depth=4, learning_rate=0.05, n_estimators=400,
+    objective="binary:logistic", eval_metric="logloss"
+)
+model.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
+
+iso = IsotonicRegression(out_of_bounds="clip")
+iso.fit(model.predict_proba(X_cal)[:, 1], y_cal)
+
+def nba_calibrated_predict(X):
+    return iso.transform(model.predict_proba(X)[:, 1])</code></pre>
+
+            <h2>Step 6: Simulate a Best-of-Seven Series</h2>
+
+            <p>A series isn't just multiplying game probabilities &mdash; home-court shifts between games in a 2-2-1-1-1 format. Monte Carlo it:</p>
+
+            <pre><code>import random
+
+def simulate_best_of_seven(high_seed, low_seed, elo, priors, n_sims=20000):
+    """
+    Standard 2-2-1-1-1: games 1, 2, 5, 7 at high seed; games 3, 4, 6 at low seed.
+    Returns high_seed series-win probability.
+    """
+    home_sequence = [high_seed, high_seed, low_seed, low_seed, high_seed, low_seed, high_seed]
+    wins = 0
+    for _ in range(n_sims):
+        high_wins, low_wins = 0, 0
+        for game_i in range(7):
+            home = home_sequence[game_i]
+            away = low_seed if home == high_seed else high_seed
+            p_home = pregame_nba_wp(home, away, elo, priors)
+            if random.random() < p_home:
+                if home == high_seed: high_wins += 1
+                else: low_wins += 1
+            else:
+                if away == high_seed: high_wins += 1
+                else: low_wins += 1
+            if high_wins == 4 or low_wins == 4:
+                break
+        if high_wins == 4:
+            wins += 1
+    return wins / n_sims</code></pre>
+
+            <h2>Step 7: Playoff Backtest Harness</h2>
+
+            <pre><code>def backtest_playoffs(playoff_games, elo_frozen, priors_frozen, model, iso):
+    preds = []
+    for _, g in playoff_games.iterrows():
+        he = elo_frozen.get(g["home_team"], 1500.0)
+        ae = elo_frozen.get(g["away_team"], 1500.0)
+        hp = priors_frozen.get(g["home_team"], {"pace": 100, "ortg": 115, "drtg": 115})
+        ap = priors_frozen.get(g["away_team"], {"pace": 100, "ortg": 115, "drtg": 115})
+        features = np.array([[
+            he - ae + HFA,
+            hp["pace"] - ap["pace"],
+            hp["ortg"] - ap["ortg"],
+            hp["drtg"] - ap["drtg"],
+        ]])
+        p = nba_calibrated_predict(features)[0]
+        preds.append({**g.to_dict(), "model_wp": p,
+                     "correct": int((p >= 0.5) == g["home_won"])})
+    return pd.DataFrame(preds)</code></pre>
+
+            <blockquote>
+                <p><strong>What we got:</strong> Our NBA model on the 2024-25 playoffs (84 games including a 7-game Finals) hit 50 of 84 (59.5%). It called every OKC home Finals game correctly at 86.8% confidence. Full breakdown and all 7 Finals predictions are <a href="https://zenhodl.net/blog/nba-finals-2025-okc-indiana-backtest">in the public retrospective</a>.</p>
+            </blockquote>
+
+            <h2>Step 8: Measure Expected Calibration Error</h2>
+
+            <pre><code>def ece(y_pred, y_true, n_bins=10):
+    bins = np.linspace(0, 1, n_bins + 1)
+    total = 0.0
+    for i in range(n_bins):
+        mask = (y_pred >= bins[i]) & (y_pred < bins[i+1])
+        if i == n_bins - 1:
+            mask = (y_pred >= bins[i]) & (y_pred <= bins[i+1])
+        if mask.sum() == 0:
+            continue
+        gap = abs(y_pred[mask].mean() - y_true[mask].mean())
+        total += gap * (mask.sum() / len(y_pred))
+    return total</code></pre>
+
+            <p>Target for NBA: ECE below 5% on full regular season. Playoff-only ECE is always noisier because of small sample (15-20 series per year).</p>
+
+            <h2>Common Mistakes That Kill an NBA Model</h2>
+
+            <h3>Using uniform home-court advantage</h3>
+            <p>Standard NBA ELO uses 80 points for every team. But some teams have much stronger home-court effects (Denver's altitude, Golden State's noise) and some are neutral. If you want top-tier calibration, fit a team-specific HFA from regular-season home/away win differentials.</p>
+
+            <h3>Ignoring back-to-backs</h3>
+            <p>NBA teams play back-to-back games frequently in the regular season. A team on a B2B has a measurable disadvantage (~20 ELO points). Not modeling this leaves regular-season accuracy on the table.</p>
+
+            <h3>Not excluding playoff games from ELO training</h3>
+            <p>Freeze ELO at the regular-season cutoff. If your ELO updates include playoff games you're trying to predict, you've leaked the future.</p>
+
+            <h3>Calibrating on training data</h3>
+            <p>The universal mistake. Always calibrate on a held-out slice that the base model never saw during training.</p>
+
+            <h3>Measuring accuracy but not ECE</h3>
+            <p>A 65% accurate NBA model with 15% ECE is less useful than a 60% accurate model with 3% ECE. ECE determines whether your 70% calls actually win 70% of the time &mdash; which is what you need for Kelly sizing.</p>
+
+            <div class="cta">
+                <h3>Want to skip building this yourself?</h3>
+                <p>ZenHodl's API gives you pre-built, pre-calibrated NBA win probabilities, plus historical snapshots for backtesting your own playoff strategies. 7-day free trial, no credit card.</p>
+                <a href="https://zenhodl.net/pricing">Get API access &rarr;</a>
+            </div>
+
+            <h2>Summary</h2>
+
+            <p>A production-grade <strong>NBA Finals prediction model</strong> is NBA-tuned ELO + team efficiency priors + XGBoost + isotonic calibration + a Monte Carlo series simulator. The hard parts are: excluding playoff games from ELO training, using the <code>.shift(1).expanding()</code> pattern so priors don't leak the future, and honestly measuring ECE instead of just accuracy.</p>
+
+            <p>Next tutorial: <a href="/build-super-bowl-prediction-model/">how to build a Super Bowl prediction model</a> &mdash; same discipline, different sport.</p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">
+            &copy; 2026 CodeFix Solution &middot; Production ML &amp; data engineering case studies
+        </div>
+    </footer>
+</body>
+</html>
