@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build a College Football Prediction Model in Python (With Calibrated Win Probabilities) — CodeFix Solution</title>
+    <meta name="description" content="Build a college football win probability model from scratch using Python, XGBoost, and ESPN play-by-play data. Learn feature engineering, isotonic calibration, and how to measure Expected Calibration Error (ECE).">
+    <link rel="canonical" href="https://codefixsolution.com/build-college-football-prediction-model/">
+    <meta property="og:title" content="How to Build a College Football Prediction Model in Python (With Calibrated Win Probabilities)">
+    <meta property="og:description" content="Complete Python tutorial: XGBoost, ESPN data, isotonic calibration, ECE measurement, and backtesting a CFB win probability model.">
+    <meta property="og:url" content="https://codefixsolution.com/build-college-football-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build a College Football Prediction Model in Python (With Calibrated Win Probabilities)</h1>
+            <div class="meta">April 22, 2026 &middot; 12 min read &middot; Python, XGBoost, Machine Learning, College Football</div>
+
+            <p>Most "how to predict college football" tutorials stop at training a logistic regression on final scores and calling it a day. That's not a prediction model &mdash; that's a classifier with a 52% accuracy ceiling. A real <strong>college football prediction model</strong> has to do three things the shortcut version won't:</p>
+
+            <ol>
+                <li>Produce <strong>live win probabilities</strong> that update every play, not just pregame picks</li>
+                <li>Be <strong>calibrated</strong> &mdash; when it says 70%, the team actually wins about 70% of the time</li>
+                <li>Hold up against the <strong>real market</strong> (Pinnacle lines, ESPN WP, Polymarket prices) when you backtest</li>
+            </ol>
+
+            <p>This guide walks through all three &mdash; using Python, XGBoost, and ESPN's publicly available play-by-play data. At the end, you'll have a working CFB win probability model you can actually trust, and the exact code to measure whether your probabilities are calibrated (most people's aren't).</p>
+
+            <h2>What You'll Build</h2>
+            <p>By the end of this tutorial:</p>
+            <ul>
+                <li>A Python pipeline that loads ESPN CFB play-by-play for the last 3 seasons</li>
+                <li>An XGBoost classifier predicting <strong>home team win probability at any game state</strong></li>
+                <li>Isotonic calibration to fix the model's systematic over/under-confidence</li>
+                <li>An <strong>Expected Calibration Error (ECE)</strong> measurement that tells you the model's honesty score</li>
+                <li>A simple backtest that treats the model as a trading signal against ESPN WP</li>
+            </ul>
+
+            <h2>Why College Football Is Harder Than the NFL</h2>
+            <p>Before we write code, understand what makes CFB prediction a different animal:</p>
+            <ul>
+                <li><strong>130 FBS teams</strong> vs. 32 NFL teams &mdash; 4&times; the team-pair combinations, far less training data per matchup</li>
+                <li><strong>Massive talent gaps</strong> &mdash; Georgia vs. UMass is not Chiefs vs. Jaguars. Blowouts break models trained on close games</li>
+                <li><strong>Roster turnover every year</strong> &mdash; transfer portal + NFL draft + recruiting = your "team identity" feature degrades each May</li>
+                <li><strong>Coaching staff changes</strong> &mdash; schemes shift, historical play-pattern features leak</li>
+                <li><strong>More variance per play</strong> &mdash; college QB play swings wider than NFL, so win probability shifts harder on single plays</li>
+            </ul>
+            <p>The good news: these are all solvable. You just need the right features and the right calibration step.</p>
+
+            <h2>Prerequisites</h2>
+            <ul>
+                <li>Python 3.9+</li>
+                <li><code>pip install pandas numpy xgboost scikit-learn pyarrow requests</code></li>
+                <li>Disk: ~2 GB for 3 seasons of play-by-play data</li>
+                <li>RAM: 8 GB+ (XGBoost with 500k+ rows is memory-hungry)</li>
+            </ul>
+
+            <h2>Step 1: Get the Training Data</h2>
+            <p>ESPN publishes play-by-play JSON for every FBS game at predictable URLs. You can pull the last several seasons with a simple scraper, or use <a href="https://github.com/sportsdataverse/cfbfastR" rel="noopener">cfbfastR</a> if you prefer R. Here's the Python approach:</p>
+
+<pre><code>import json
+import requests
+import pandas as pd
+from pathlib import Path
+
+def fetch_espn_cfb_game(game_id: int) -> dict:
+    """Fetch ESPN's play-by-play JSON for a CFB game."""
+    url = f"https://site.api.espn.com/apis/site/v2/sports/football/college-football/summary?event={game_id}"
+    r = requests.get(url, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+def extract_plays(game_json: dict) -> list:
+    """Flatten the nested plays structure into rows."""
+    rows = []
+    home_id = game_json["boxscore"]["teams"][1]["team"]["id"]
+    for drive in game_json.get("drives", {}).get("previous", []):
+        for play in drive.get("plays", []):
+            rows.append({
+                "game_id": game_json["header"]["id"],
+                "period": play["period"]["number"],
+                "clock_seconds": parse_clock(play["clock"]["displayValue"], play["period"]["number"]),
+                "home_score": play.get("homeScore", 0),
+                "away_score": play.get("awayScore", 0),
+                "possession_home": play.get("start", {}).get("team", {}).get("id") == home_id,
+                "down": play.get("start", {}).get("down"),
+                "distance": play.get("start", {}).get("distance"),
+                "yard_line": play.get("start", {}).get("yardLine"),
+                "espn_wp": play.get("winProbability", {}).get("homeWinPercentage"),
+            })
+    return rows
+
+def parse_clock(clock_str: str, period: int) -> int:
+    """Convert '14:32' + period to total seconds remaining in regulation."""
+    mins, secs = map(int, clock_str.split(":"))
+    elapsed_periods = period - 1
+    return (4 - period) * 900 + (mins * 60 + secs)
+</code></pre>
+
+            <p>Loop this over a season's game IDs (they're sequential per week) and save to Parquet. You'll want 3 seasons minimum &mdash; 2 to train, 1 to test. Never train and test on the same season.</p>
+
+            <h2>Step 2: Feature Engineering</h2>
+            <p>Raw play-by-play isn't what you feed a model. You need features that capture <strong>game state</strong>, not play outcome. The classics:</p>
+
+<pre><code>import numpy as np
+import pandas as pd
+
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # Core game-state features
+    df["score_diff"] = df["home_score"] - df["away_score"]
+    df["secs_remaining"] = df["clock_seconds"]  # regulation only
+    df["time_fraction"] = 1 - (df["secs_remaining"] / 3600)  # 0 = start, 1 = end
+
+    # Possession matters a lot when the game is close
+    df["possession_home_int"] = df["possession_home"].astype(int)
+
+    # Down/distance/field position (proxy for drive danger)
+    df["down"] = df["down"].fillna(0).astype(int)
+    df["distance"] = df["distance"].fillna(0).clip(upper=40)
+    df["yards_to_goal"] = (100 - df["yard_line"]).fillna(50)
+
+    # Interaction: late-game close-score states are the hardest to predict
+    df["late_and_close"] = (
+        (df["time_fraction"] > 0.85) & (df["score_diff"].abs() <= 8)
+    ).astype(int)
+
+    # Log-scaled distance from 50/50 score (helps tree splits)
+    df["abs_score_diff_log"] = np.log1p(df["score_diff"].abs())
+
+    return df
+</code></pre>
+
+            <blockquote>
+                <strong>Gotcha:</strong> don't include ESPN's <code>winProbability.homeWinPercentage</code> as a feature. It's the answer leaking in. Use it only as a <em>market comparison baseline</em> later in the backtest.
+            </blockquote>
+
+            <h2>Step 3: Train the XGBoost Model</h2>
+            <p>A gradient-boosted tree handles non-linear interactions (time &times; score &times; possession) far better than logistic regression. Keep it simple with ~500 trees and light depth:</p>
+
+<pre><code>from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+
+FEATURES = [
+    "score_diff", "secs_remaining", "time_fraction",
+    "possession_home_int", "down", "distance", "yards_to_goal",
+    "late_and_close", "abs_score_diff_log", "period",
+]
+
+# Time-split: train on 2023+2024, test on 2025 — never mix seasons
+train = df[df["season"].isin(["2023", "2024"])]
+test  = df[df["season"] == "2025"]
+
+X_train, y_train = train[FEATURES], train["home_won"]
+X_test,  y_test  = test[FEATURES],  test["home_won"]
+
+model = XGBClassifier(
+    n_estimators=500,
+    max_depth=5,
+    learning_rate=0.05,
+    subsample=0.85,
+    colsample_bytree=0.8,
+    reg_alpha=0.1,
+    reg_lambda=1.0,
+    eval_metric="logloss",
+    early_stopping_rounds=25,
+    random_state=42,
+)
+
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_test, y_test)],
+    verbose=False,
+)
+
+raw_probs = model.predict_proba(X_test)[:, 1]
+print(f"Log loss on test: {sklearn.metrics.log_loss(y_test, raw_probs):.4f}")
+</code></pre>
+
+            <p>You'll get log-loss somewhere in the <code>0.40 &ndash; 0.48</code> range. That's respectable but <em>the probabilities are still not calibrated</em>. The model is confident where it shouldn't be.</p>
+
+            <h2>Step 4: Calibrate With Isotonic Regression</h2>
+            <p>The single most under-appreciated step in sports prediction. XGBoost gives you "probabilities" that are actually scores &mdash; they rank cases correctly but the absolute numbers are wrong. Isotonic regression maps the raw score to the actual observed win rate at each bucket.</p>
+
+<pre><code>from sklearn.isotonic import IsotonicRegression
+
+# Fit calibrator on a held-out slice of training data (not test!)
+X_train_cal, X_train_fit, y_train_cal, y_train_fit = train_test_split(
+    X_train, y_train, test_size=0.2, random_state=42
+)
+model.fit(X_train_fit, y_train_fit)
+
+# Calibrate on the held-out slice
+cal_probs_raw = model.predict_proba(X_train_cal)[:, 1]
+calibrator = IsotonicRegression(out_of_bounds="clip")
+calibrator.fit(cal_probs_raw, y_train_cal)
+
+# Now transform test set predictions
+test_raw   = model.predict_proba(X_test)[:, 1]
+test_prob  = calibrator.transform(test_raw)
+</code></pre>
+
+            <h2>Step 5: Measure Expected Calibration Error (ECE)</h2>
+            <p>ECE tells you, in one number, how honest your probabilities are. Bin your predictions, compare the bin's average predicted probability to its actual win rate, and weight by bin size. Lower is better. Below 2% is excellent; above 5% means you still need work.</p>
+
+<pre><code>import numpy as np
+
+def expected_calibration_error(y_true, y_prob, n_bins=20):
+    bins = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    n = len(y_prob)
+    for i in range(n_bins):
+        mask = (y_prob &gt;= bins[i]) &amp; (y_prob &lt; bins[i + 1])
+        if mask.sum() == 0:
+            continue
+        bin_prob = y_prob[mask].mean()
+        bin_true = y_true[mask].mean()
+        bin_weight = mask.sum() / n
+        ece += bin_weight * abs(bin_prob - bin_true)
+    return ece
+
+print(f"Raw ECE:        {expected_calibration_error(y_test.values, test_raw):.4f}")
+print(f"Calibrated ECE: {expected_calibration_error(y_test.values, test_prob):.4f}")
+</code></pre>
+
+            <p>Typical results: raw ECE lands around 4-6%, isotonic drops it to 1-2%. If you don't see that reduction, your calibrator is probably being fit on the wrong data (i.e., you're leaking between calibration and test folds).</p>
+
+            <h2>Step 6: Backtest Against ESPN's Win Probability</h2>
+            <p>Here's where most tutorials stop. Don't. A model with good log-loss can still lose money against the real market. Simulate it:</p>
+
+<pre><code>MIN_EDGE = 0.05   # require 5 percentage points of disagreement
+FEE = 0.02        # 2% taker fee (Polymarket-realistic)
+SLIPPAGE = 0.01   # 1% slippage
+
+test_df = X_test.copy()
+test_df["y_true"] = y_test.values
+test_df["model_prob"] = test_prob
+test_df["market_prob"] = market_wp  # ESPN WP, loaded earlier
+
+# Signal: take a position when our model disagrees with ESPN
+test_df["edge"] = test_df["model_prob"] - test_df["market_prob"]
+
+buys  = test_df[test_df["edge"] &gt;=  MIN_EDGE]  # model says home is undervalued
+sells = test_df[test_df["edge"] &lt;= -MIN_EDGE]  # model says home is overvalued
+
+# Simulate "buy at market, settle at true outcome"
+buy_pnl  = (buys["y_true"]         - buys["market_prob"])  - FEE - SLIPPAGE
+sell_pnl = ((1 - sells["y_true"])  - (1 - sells["market_prob"])) - FEE - SLIPPAGE
+
+total_pnl = buy_pnl.sum() + sell_pnl.sum()
+n_trades  = len(buys) + len(sells)
+print(f"Trades: {n_trades} | Total PnL: {total_pnl:.2f} | Per-trade: {total_pnl/n_trades:.4f}")
+</code></pre>
+
+            <p>A healthy CFB model clears <strong>0.5&ndash;1.5 cents per trade net</strong> at a 5-point minimum edge. Less than that and the fees eat your signal.</p>
+
+            <h2>The Gotchas That Will Bite You</h2>
+            <ul>
+                <li><strong>Look-ahead bias:</strong> your features cannot include any column that was populated <em>after</em> the play happened. Final score = leak. Drive result = leak.</li>
+                <li><strong>Game-level splits:</strong> don't shuffle rows across games in your train/test split. All plays from one game must be in the same fold, or you leak the outcome through adjacent plays.</li>
+                <li><strong>Class imbalance:</strong> if your training set is 55% home wins, the model will lean home. Use <code>scale_pos_weight</code> or subsample.</li>
+                <li><strong>Calibration on test set:</strong> fitting the calibrator on test data is cheating. Always use a held-out calibration fold from the training set.</li>
+                <li><strong>Early season:</strong> weeks 1-3 are the noisiest period of the season. Every model underperforms there. Either down-weight them or cut them from your training data.</li>
+            </ul>
+
+            <h2>The Shortcut: Use a Pre-Built Calibrated API</h2>
+            <p>Doing all of this yourself is a weekend of work if everything goes right, or a month if it doesn't. If you want the output without writing the pipeline, there's a <a href="https://zenhodl.net/docs" rel="noopener">calibrated probability API</a> that runs this exact stack &mdash; XGBoost ensembles, isotonic calibration, published ECE under 2% &mdash; across 10+ sports including CFB.</p>
+
+            <p>Every call returns <code>fair_prob</code> (the calibrated home win probability), <code>market_prob</code> (current Polymarket price), and <code>edge</code> (the difference). You skip the data pipeline and get straight to backtesting or live trading:</p>
+
+<pre><code>import requests
+
+resp = requests.get(
+    "https://zenhodl.net/v1/edges",
+    headers={"X-API-Key": "your_key"},
+    params={"sport": "CFB", "min_edge": 5},
+)
+
+for edge in resp.json():
+    print(f"{edge['team']} vs {edge['opponent']}: "
+          f"model={edge['fair_prob']:.2f} market={edge['market_prob']:.2f} "
+          f"edge={edge['edge_c']}c")
+</code></pre>
+
+            <div class="cta">
+                <h3>Skip the training pipeline. Get the signals.</h3>
+                <p>Every prediction is calibrated, live, and measured. Public track record, ECE published per sport, full API access.</p>
+                <p><a href="https://zenhodl.net/signup" rel="noopener">Start 7-Day Free Trial &rarr;</a></p>
+            </div>
+
+            <h2>Bottom Line</h2>
+            <p>A college football prediction model isn't hard to build. A college football prediction model <em>that you can trust with money</em> requires the three steps almost nobody does: isotonic calibration, ECE measurement, and honest market backtesting. Do those, and you'll have a model that beats the casual picks sites. Skip them, and you'll have one more overconfident classifier.</p>
+
+            <p>Once CFB season kicks off in August, the teams that win the SEO race are the ones that shipped their content in spring. Now you know the math &mdash; go ship.</p>
+
+        </article>
+    </div>
+    <footer><div class="container">&copy; 2026 CodeFix Solution &middot; <a href="/">Home</a></div></footer>
+</body>
+</html>
