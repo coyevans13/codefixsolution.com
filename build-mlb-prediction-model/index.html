@@ -309,6 +309,15 @@ print(f"ECE: {ece(calibrated_predict(X_test), y_test):.4f}")</code></pre>
             <p>A production-grade <strong>MLB prediction model</strong> is baseball-tuned ELO + starting-pitcher differentials + XGBoost + isotonic calibration. MLB is the highest-variance playoff sport because short series amplify randomness &mdash; but that same variance is why calibration matters more here than anywhere else. When your model says 55%, a 162-game dataset makes sure it really means 55%.</p>
 
             <p>Next tutorial: <a href="/build-nba-finals-prediction-model/">how to build the NBA Finals equivalent</a> &mdash; same calibration discipline, different sport, different tuning constants.</p>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/blog/world-series-2025-mlb-playoff-backtest" target="_blank">Our World Series 2025 Retrospective</a> &mdash; 59.6% across 47 postseason games, including 100% on NLCS.</li>
+                <li><a href="/build-nhl-stanley-cup-prediction-model/">Build an NHL Stanley Cup prediction model</a> &mdash; sibling sport with seasonal depth + best-of-seven playoff bracket.</li>
+                <li><a href="/build-nba-finals-prediction-model/">Build an NBA Finals prediction model</a> &mdash; pace/ORTG/DRTG features applied to a bracket sport.</li>
+                <li><a href="/python-xgboost-probability-calibration/">Calibrating XGBoost probabilities with isotonic regression</a> &mdash; why raw XGBoost probabilities need post-hoc calibration.</li>
+                <li><a href="/xgboost-sample-weights/">Sample weights in XGBoost</a> &mdash; how to emphasize recent data or correct class imbalance.</li>
+            </ul>
         </article>
     </div>
 

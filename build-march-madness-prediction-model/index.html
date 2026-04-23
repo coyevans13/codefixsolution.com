@@ -373,6 +373,16 @@ print(f"ECE: {ece:.4f}")</code></pre>
             <p>A production-grade <strong>March Madness prediction model</strong> is ELO + team efficiency priors + calibrated XGBoost + an honest tournament backtest. The ingredients are all publicly available from ESPN. The hard part is the discipline: chronological splits, held-out calibration, and measuring ECE. Get those right and you can build something that competes with KenPom-grade models in a weekend.</p>
 
             <p>Next tutorial: <a href="/build-college-football-prediction-model/">how to build the college-football equivalent</a> &mdash; same calibration discipline, different sport, different feature set.</p>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/blog/march-madness-2026-backtest-71-percent-accuracy" target="_blank">Our 2026 March Madness Backtest</a> &mdash; this exact pipeline applied to the 67-game tournament: 71.6% accuracy, 3/3 on Final Four + Championship.</li>
+                <li><a href="https://zenhodl.net/blog/ncaamb-2025-26-season-report-5345-games" target="_blank">NCAAMB 2025-26 Season Report</a> &mdash; same model on 5,345 regular-season games: ECE 4.39%.</li>
+                <li><a href="/best-college-basketball-prediction-sites/">Best College Basketball Prediction Sites 2026</a> &mdash; how this model compares to KenPom, Bart Torvik, FiveThirtyEight, ESPN BPI.</li>
+                <li><a href="/build-nba-finals-prediction-model/">Build an NBA Finals prediction model</a> &mdash; sibling basketball tutorial with pace/ORTG/DRTG features.</li>
+                <li><a href="/python-xgboost-probability-calibration/">Calibrating XGBoost probabilities with isotonic regression</a> &mdash; the calibration step explained in depth.</li>
+                <li><a href="/feature-engineering-sports-win-probability/">Feature engineering for sports win probability</a> &mdash; the 15 features that actually matter.</li>
+            </ul>
         </article>
     </div>
 

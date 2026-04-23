@@ -349,6 +349,15 @@ def sim_match_score(home_team, away_team, p_home, p_draw, p_away):
             <p>A production-grade <strong>soccer prediction model</strong> is league-tuned ELO + draw-aware 3-class probabilities + league-strength adjustments + XGBoost with isotonic calibration + careful handling of aggregate knockouts. Soccer is harder than any other major sport to model, but the ingredients are all in Python, and with honest calibration you can build something that beats public markets in the niches where draws dominate.</p>
 
             <p>Related tutorials: <a href="/build-nhl-stanley-cup-prediction-model/">NHL Stanley Cup prediction model</a> &middot; <a href="/build-super-bowl-prediction-model/">Super Bowl prediction model</a></p>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/blog/ucl-2025-26-champions-league-final-preview" target="_blank">UCL 2025-26 Champions League Final Preview</a> &mdash; this exact model applied to club soccer: 75% accuracy, 0.17 calibrated Brier.</li>
+                <li><a href="https://zenhodl.net/blog/2026-fifa-world-cup-futures-odds-april" target="_blank">2026 FIFA World Cup Futures</a> &mdash; Monte Carlo championship probabilities for 48 national teams.</li>
+                <li><a href="/build-mlb-prediction-model/">Build an MLB prediction model</a> &mdash; sibling sport with starting-pitcher features.</li>
+                <li><a href="/build-nba-finals-prediction-model/">Build an NBA Finals prediction model</a> &mdash; best-of-seven bracket simulator with similar Monte Carlo discipline.</li>
+                <li><a href="/python-xgboost-probability-calibration/">Calibrating XGBoost probabilities with isotonic regression</a> &mdash; per-class calibration for 3-outcome soccer models.</li>
+            </ul>
         </article>
     </div>
 

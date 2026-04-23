@@ -321,6 +321,15 @@ def simulate_best_of_seven(high_seed, low_seed, elo, priors, n_sims=20000):
             <p>A production-grade <strong>NBA Finals prediction model</strong> is NBA-tuned ELO + team efficiency priors + XGBoost + isotonic calibration + a Monte Carlo series simulator. The hard parts are: excluding playoff games from ELO training, using the <code>.shift(1).expanding()</code> pattern so priors don't leak the future, and honestly measuring ECE instead of just accuracy.</p>
 
             <p>Next tutorial: <a href="/build-super-bowl-prediction-model/">how to build a Super Bowl prediction model</a> &mdash; same discipline, different sport.</p>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/blog/nba-finals-2025-okc-indiana-backtest" target="_blank">Our NBA 2024-25 Playoff Retrospective</a> &mdash; 50/84 (59.5%) including OKC's championship run correctly called.</li>
+                <li><a href="/build-march-madness-prediction-model/">Build a March Madness prediction model</a> &mdash; the college basketball equivalent tutorial.</li>
+                <li><a href="https://zenhodl.net/blog/march-madness-2026-backtest-71-percent-accuracy" target="_blank">March Madness 2026 Backtest</a> &mdash; the college basketball playoff companion (71.6% on 67 games).</li>
+                <li><a href="/build-nhl-stanley-cup-prediction-model/">Build an NHL Stanley Cup prediction model</a> &mdash; sibling playoff-bracket sport with similar Monte Carlo discipline.</li>
+                <li><a href="/feature-engineering-sports-win-probability/">Feature engineering for sports win probability</a> &mdash; deep dive on the 15 features.</li>
+            </ul>
         </article>
     </div>
 

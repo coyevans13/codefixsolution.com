@@ -330,6 +330,15 @@ print(f"Brier score: {brier:.4f}")</code></pre>
             <p>A production-grade <strong>Super Bowl prediction model</strong> is NFL-tuned ELO + Monte Carlo bracket simulation + correct neutral-site handling + honest calibration measurement. The ingredients are all publicly available. The hard parts are the details: the 55-point HFA, the neutral-site strip on the Super Bowl, the reseed logic in the Divisional round, and the discipline to freeze ELO before the playoffs begin.</p>
 
             <p>Next tutorial: <a href="/build-march-madness-prediction-model/">how to build the equivalent for March Madness</a> &mdash; same calibration discipline, different sport, different feature set.</p>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="https://zenhodl.net/blog/nfl-playoffs-super-bowl-lx-backtest" target="_blank">Our Super Bowl LX Retrospective</a> &mdash; 9/13 on the 2025-26 NFL playoffs, including correctly calling Seattle over New England.</li>
+                <li><a href="/build-nhl-stanley-cup-prediction-model/">Build an NHL Stanley Cup prediction model</a> &mdash; sibling tutorial with Monte Carlo bracket sim and special-teams features.</li>
+                <li><a href="/build-nba-finals-prediction-model/">Build an NBA Finals prediction model</a> &mdash; another bracket-based sport, ELO K=20 + efficiency priors.</li>
+                <li><a href="/build-college-football-prediction-model/">Build a college football prediction model</a> &mdash; the NCAAF equivalent with ESPN play-by-play data.</li>
+                <li><a href="/python-xgboost-probability-calibration/">Calibrating XGBoost probabilities with isotonic regression</a> &mdash; the calibration discipline.</li>
+            </ul>
         </article>
     </div>
 
