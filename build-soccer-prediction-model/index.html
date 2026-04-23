@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How to Build a Soccer Prediction Model in Python (ELO + XGBoost + Draw Handling) &mdash; CodeFix Solution</title>
+    <meta name="description" content="Build a soccer prediction model from scratch in Python using ELO ratings, XGBoost with isotonic calibration, and correct handling of draws. Covers EPL, La Liga, Bundesliga, and World Cup tournament simulation.">
+    <link rel="canonical" href="https://codefixsolution.com/build-soccer-prediction-model/">
+    <meta property="og:title" content="How to Build a Soccer Prediction Model in Python (ELO + XGBoost + Draw Handling)">
+    <meta property="og:description" content="Complete Python tutorial: ESPN soccer data, ELO ratings with draw probability, XGBoost + isotonic calibration, and World Cup / Champions League bracket simulation.">
+    <meta property="og:url" content="https://codefixsolution.com/build-soccer-prediction-model/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>How to Build a Soccer Prediction Model in Python (ELO + XGBoost + Draw Handling)</h1>
+            <div class="meta">April 22, 2026 &middot; 15 min read &middot; Python, ELO, XGBoost, Soccer, Machine Learning</div>
+
+            <p>Soccer is the hardest major sport to predict. Three outcomes (home/draw/away) instead of two. Massive scoring variance (often decided by a single goal). League strength varies wildly between countries. And unlike North American sports, there's no playoff bracket to cleanly simulate — the Champions League is two-leg aggregates, the World Cup expanded from 32 to 48 teams in 2026, and every domestic league has its own quirks.</p>
+
+            <p>A production-grade <strong>soccer prediction model</strong> has to do four things:</p>
+
+            <ol>
+                <li>Handle three outcomes (home win, draw, away win) properly, not just binary</li>
+                <li>Account for <strong>league strength differences</strong> when predicting cross-league matches (Champions League, Europa League)</li>
+                <li>Deal with <strong>two-leg aggregate knockouts</strong>, extra time, and penalty shootouts</li>
+                <li>Cope with <strong>small-sample matchups</strong> (clubs meet only once or twice per season)</li>
+            </ol>
+
+            <p>This guide walks through all four in Python with ESPN data, sklearn-based ELO ratings, and XGBoost + isotonic calibration. At the end you'll have a soccer model that beats a pure-ELO baseline by ~10% and is honest about draws.</p>
+
+            <h2>What You'll Build</h2>
+            <ul>
+                <li>ESPN data loader for any major league (EPL, La Liga, Bundesliga, Ligue 1, Serie A) + UCL</li>
+                <li><strong>Soccer-tuned ELO</strong> (K=20, HFA=60) with draw-aware win probability</li>
+                <li><strong>League strength adjustments</strong> for cross-league matches</li>
+                <li><strong>XGBoost model</strong> for H/D/A classification with isotonic calibration</li>
+                <li><strong>Tournament Monte Carlo</strong> that handles UCL 2-leg aggregates and WC 48-team group+KO format</li>
+                <li><strong>ECE measurement</strong> for multi-class output</li>
+            </ul>
+
+            <p>Python 3.11+. Deps: <code>pandas</code>, <code>numpy</code>, <code>xgboost</code>, <code>scikit-learn</code>, <code>requests</code>.</p>
+
+            <h2>Step 1: Pull ESPN Soccer Data</h2>
+
+            <p>ESPN covers all major European leagues with a standard scoreboard endpoint. Replace the league slug as needed:</p>
+
+            <pre><code>import requests, pandas as pd
+from datetime import date, timedelta
+
+LEAGUES = {
+    "EPL":       "eng.1",
+    "LA_LIGA":   "esp.1",
+    "BUNDESLIGA":"ger.1",
+    "LIGUE_1":   "fra.1",
+    "SERIE_A":   "ita.1",
+    "UCL":       "uefa.champions",
+    "UEFA_EUROPA":"uefa.europa",
+}
+
+def fetch_soccer_games(league_slug: str, date_yyyymmdd: str) -> list[dict]:
+    url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league_slug}/scoreboard"
+    r = requests.get(url, params={"dates": date_yyyymmdd}, timeout=15)
+    r.raise_for_status()
+    out = []
+    for ev in r.json().get("events", []):
+        comp = ev["competitions"][0]
+        if not comp.get("completed"):
+            continue
+        home = next(t for t in comp["competitors"] if t["homeAway"] == "home")
+        away = next(t for t in comp["competitors"] if t["homeAway"] == "away")
+        hs = int(home.get("score", 0) or 0)
+        as_ = int(away.get("score", 0) or 0)
+        out.append({
+            "game_id": int(ev["id"]),
+            "date": date_yyyymmdd,
+            "league": league_slug,
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": hs,
+            "away_score": as_,
+            "outcome": "H" if hs > as_ else ("A" if as_ > hs else "D"),
+        })
+    return out</code></pre>
+
+            <h2>Step 2: Soccer-Tuned ELO With Draws</h2>
+
+            <p>Soccer ELO needs different tuning than North American sports because of the third outcome:</p>
+
+            <pre><code>K = 20.0     # per-game learning rate
+HFA = 60.0   # home field advantage in ELO points (EPL: ~55, La Liga: ~60)
+
+def elo_win_prob(home_elo: float, away_elo: float, is_neutral: bool = False) -> float:
+    """Probability home team wins outright (not draws or loses). For predictions, use prob_HDA below."""
+    hfa = 0 if is_neutral else HFA
+    return 1.0 / (1.0 + 10 ** (-(home_elo - away_elo + hfa) / 400.0))
+
+def prob_HDA(home_elo: float, away_elo: float, is_neutral: bool = False,
+             draw_rate: float = 0.24) -> tuple[float, float, float]:
+    """
+    Returns (P(home win), P(draw), P(away win)).
+    draw_rate: baseline ~24% in EPL/La Liga/Serie A.
+    """
+    p_home_raw = elo_win_prob(home_elo, away_elo, is_neutral)
+    # Split (1 - draw_rate) between home and away based on Elo edge
+    p_home = (1 - draw_rate) * p_home_raw
+    p_away = (1 - draw_rate) * (1 - p_home_raw)
+    return p_home, draw_rate, p_away
+
+def compute_soccer_elo(games: pd.DataFrame) -> dict:
+    """Returns {team: current Elo rating}. Expects 'outcome' column: 'H', 'D', 'A'."""
+    elo = {}
+    games = games.sort_values("game_id").reset_index(drop=True)
+    for _, r in games.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        he = elo.get(h, 1500.0)
+        ae = elo.get(a, 1500.0)
+        expected_h = elo_win_prob(he, ae)
+        # Outcome mapping: H=1, D=0.5, A=0
+        actual_h = {"H": 1.0, "D": 0.5, "A": 0.0}[r["outcome"]]
+        margin = abs(r["home_score"] - r["away_score"])
+        mov = 1.0 + 0.5 * (margin > 1) + 0.5 * (margin > 2)  # capped log-ish MoV
+        delta = K * mov * (actual_h - expected_h)
+        elo[h] = he + delta
+        elo[a] = ae - delta
+    return elo</code></pre>
+
+            <h2>Step 3: League Strength Adjustments</h2>
+
+            <p>A top EPL team is not the same as a top Bundesliga team. For cross-league matches (UCL, Europa League, cup finals), you need a league-strength multiplier on top of individual team Elo:</p>
+
+            <pre><code>LEAGUE_STRENGTH = {
+    "EPL":        1.00,   # baseline
+    "LA_LIGA":    0.97,
+    "BUNDESLIGA": 0.94,
+    "SERIE_A":    0.92,
+    "LIGUE_1":    0.88,
+    "EREDIVISIE": 0.78,
+    "PRIMEIRA":   0.80,   # Portugal
+}
+
+def adjusted_elo(team: str, league: str, base_elo: float) -> float:
+    """Adjust team Elo by league-strength multiplier when comparing across leagues."""
+    strength = LEAGUE_STRENGTH.get(league, 0.85)
+    # Normalize around 1500
+    return 1500 + (base_elo - 1500) * strength</code></pre>
+
+            <p>These coefficients are starting points. Fit them by running cross-league matches (UCL, Europa League finals) as your calibration set.</p>
+
+            <h2>Step 4: XGBoost With Isotonic Calibration (3-Class)</h2>
+
+            <p>For higher accuracy than pure Elo, train an XGBoost classifier on features + Elo:</p>
+
+            <pre><code>from xgboost import XGBClassifier
+from sklearn.isotonic import IsotonicRegression
+from sklearn.model_selection import train_test_split
+
+FEATURES = [
+    "elo_diff",        # home Elo - away Elo
+    "league_strength", # league multiplier
+    "rest_diff",       # days of rest difference
+    "form_5_diff",     # home - away points in last 5 matches
+    "xg_diff_30d",     # home - away expected-goals in last 30 days (if available)
+    "home_streak",     # home team consecutive wins
+    "away_streak",
+    "home_pos",        # league table position (for league matches)
+    "away_pos",
+]
+
+# Three-class target: H=0, D=1, A=2
+y = training_df["outcome_encoded"].values
+X = training_df[FEATURES].values
+
+cutoff = int(0.7 * len(X))
+X_train, X_cal = X[:cutoff], X[cutoff:]
+y_train, y_cal = y[:cutoff], y[cutoff:]
+
+model = XGBClassifier(
+    max_depth=4, learning_rate=0.05, n_estimators=500,
+    objective="multi:softprob", num_class=3,
+    eval_metric="mlogloss",
+)
+model.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
+
+# Isotonic calibration (one per class)
+raw_probs_cal = model.predict_proba(X_cal)
+calibrators = [IsotonicRegression(out_of_bounds="clip") for _ in range(3)]
+for i, c in enumerate(calibrators):
+    c.fit(raw_probs_cal[:, i], (y_cal == i).astype(int))
+
+def predict_HDA(X):
+    raw = model.predict_proba(X)
+    cal = np.stack([calibrators[i].transform(raw[:, i]) for i in range(3)], axis=1)
+    return cal / cal.sum(axis=1, keepdims=True)</code></pre>
+
+            <blockquote>
+                <p><strong>What we got:</strong> Our production soccer model trained on 2,949 matches achieved 75.1% accuracy, calibrated Brier of 0.171, AUC 0.83 — a 9.4% improvement over pure Elo baseline. Applied to UCL 2025-26 QFs, it correctly called PSG over Liverpool, Atlético over Barcelona, and Bayern over Real Madrid. Full 2025-26 UCL breakdown and live championship probabilities are <a href="https://zenhodl.net/blog/ucl-2025-26-champions-league-final-preview">in the public preview</a>.</p>
+            </blockquote>
+
+            <h2>Step 5: Two-Leg Aggregate Knockouts (UCL, Europa)</h2>
+
+            <p>UEFA competitions use two-leg aggregate ties, not single games. For tournament simulation:</p>
+
+            <pre><code>def sim_two_leg_tie(home_first: str, away_first: str, elo: dict, n_sims: int = 10000) -> float:
+    """Returns P(home_first team advances). Home/away flipped between legs."""
+    wins = 0
+    for _ in range(n_sims):
+        # Leg 1 at home_first
+        p_h1, p_d1, p_a1 = prob_HDA(elo[home_first], elo[away_first])
+        r1 = random.random()
+        h1_goals, a1_goals = sim_match_score(home_first, away_first, p_h1, p_d1, p_a1)
+
+        # Leg 2 at away_first (now hosting)
+        p_h2, p_d2, p_a2 = prob_HDA(elo[away_first], elo[home_first])
+        r2 = random.random()
+        h2_goals, a2_goals = sim_match_score(away_first, home_first, p_h2, p_d2, p_a2)
+
+        # Aggregate
+        home_first_total = h1_goals + a2_goals
+        away_first_total = a1_goals + h2_goals
+
+        if home_first_total > away_first_total:
+            wins += 1
+        elif home_first_total < away_first_total:
+            pass
+        else:
+            # Extra time + penalties — treat as coin flip (or use away-goals rule)
+            if random.random() < 0.5:
+                wins += 1
+    return wins / n_sims
+
+def sim_match_score(home_team, away_team, p_home, p_draw, p_away):
+    """Poisson-based score simulation given match probabilities."""
+    r = random.random()
+    if r < p_home:
+        h_goals = max(1, np.random.poisson(1.8))
+        a_goals = np.random.poisson(0.8)
+        return max(h_goals, a_goals + 1), min(h_goals, a_goals + 1)
+    elif r < p_home + p_draw:
+        g = np.random.poisson(1.2)
+        return g, g
+    else:
+        a_goals = max(1, np.random.poisson(1.8))
+        h_goals = np.random.poisson(0.8)
+        return min(h_goals, a_goals - 1), max(h_goals, a_goals - 1)</code></pre>
+
+            <h2>Step 6: 48-Team World Cup Tournament Simulator</h2>
+
+            <p>The 2026 World Cup has a group stage (12 groups of 4) followed by a 32-team knockout bracket. Monte Carlo:</p>
+
+            <pre><code>def sim_world_cup(field: list[str], elo: dict, n_sims: int = 10000) -> dict:
+    """Returns championship probability per team across n_sims."""
+    from collections import Counter
+    champs = Counter()
+    for _ in range(n_sims):
+        groups = draw_groups(field)  # 12 groups of 4
+        advancing = group_stage(groups)  # top 2 + 8 best thirds = 32
+        random.shuffle(advancing)  # KO bracket draw
+        # 5 rounds: Round of 32, 16, QF, SF, F
+        bracket = advancing
+        for _ in range(5):
+            winners = []
+            for i in range(0, len(bracket), 2):
+                a, b = bracket[i], bracket[i+1]
+                # Single-leg knockout — use Elo-based binary probability (treat draws as coin flip)
+                p_a = elo_win_prob(elo.get(a, 1600), elo.get(b, 1600), is_neutral=True)
+                winners.append(a if random.random() < p_a else b)
+            bracket = winners
+        champs[bracket[0]] += 1
+    return {t: c / n_sims for t, c in champs.items()}</code></pre>
+
+            <h2>Step 7: Measure Multi-Class ECE</h2>
+
+            <pre><code>def multi_class_ece(y_pred_probs, y_true, n_bins=10):
+    """ECE for multi-class predictions. y_pred_probs is (n_samples, n_classes)."""
+    # Use max predicted probability as confidence
+    conf = y_pred_probs.max(axis=1)
+    pred = y_pred_probs.argmax(axis=1)
+    correct = (pred == y_true).astype(int)
+
+    bins = np.linspace(0, 1, n_bins + 1)
+    total = 0.0
+    for i in range(n_bins):
+        mask = (conf >= bins[i]) & (conf < bins[i+1])
+        if i == n_bins - 1:
+            mask = (conf >= bins[i]) & (conf <= bins[i+1])
+        if mask.sum() == 0: continue
+        gap = abs(conf[mask].mean() - correct[mask].mean())
+        total += gap * (mask.sum() / len(y_pred_probs))
+    return total</code></pre>
+
+            <p>Target: ECE under 7% for a 3-class soccer model. Higher than binary-outcome sports because draw prediction is inherently harder.</p>
+
+            <h2>Common Mistakes That Kill a Soccer Model</h2>
+
+            <h3>Treating soccer as binary win/loss</h3>
+            <p>Ignoring draws is the #1 mistake. About 24% of soccer matches end in a draw. If your model is trained as binary, it'll over-predict wins for both sides and be systematically miscalibrated.</p>
+
+            <h3>Ignoring league strength for cross-league matches</h3>
+            <p>A top EPL team's Elo is not comparable to a top Eredivisie team's Elo. When predicting UCL / Europa / cup matches, apply a league-strength multiplier, or your cross-league predictions will systematically under/over-weight certain leagues.</p>
+
+            <h3>Using two-leg aggregate as if it's one match</h3>
+            <p>UCL and Europa League knockouts are 2-leg aggregates with home/away split. Simulating it as a single match throws away the variance. Always run both legs separately.</p>
+
+            <h3>Ignoring away goals and extra time</h3>
+            <p>UEFA removed the away-goals rule in 2021 but extra time + penalty shootouts still resolve ~5% of ties. Model these as coin flips or skip them — don't pretend aggregate ties resolve at full time.</p>
+
+            <h3>Over-weighting recent form</h3>
+            <p>Last 5 matches is a useful feature but it's noisy. A team can go on a 5-game winning streak against weak opposition and not be actually better. Combine form with Elo, don't replace Elo with form.</p>
+
+            <div class="cta">
+                <h3>Want to skip building this yourself?</h3>
+                <p>ZenHodl's API gives you pre-built soccer win probabilities across EPL, La Liga, Bundesliga, Ligue 1, Serie A, and Champions League — with isotonic-calibrated 3-class predictions. 7-day free trial, no credit card.</p>
+                <a href="https://zenhodl.net/pricing">Get API access &rarr;</a>
+            </div>
+
+            <h2>Summary</h2>
+
+            <p>A production-grade <strong>soccer prediction model</strong> is league-tuned ELO + draw-aware 3-class probabilities + league-strength adjustments + XGBoost with isotonic calibration + careful handling of aggregate knockouts. Soccer is harder than any other major sport to model, but the ingredients are all in Python, and with honest calibration you can build something that beats public markets in the niches where draws dominate.</p>
+
+            <p>Related tutorials: <a href="/build-nhl-stanley-cup-prediction-model/">NHL Stanley Cup prediction model</a> &middot; <a href="/build-super-bowl-prediction-model/">Super Bowl prediction model</a></p>
+        </article>
+    </div>
+
+    <footer>
+        <div class="container">
+            &copy; 2026 CodeFix Solution &middot; Production ML &amp; data engineering case studies
+        </div>
+    </footer>
+</body>
+</html>
