@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time-Series Cross-Validation for Sports Models: Why K-Fold Lies — CodeFix Solution</title>
+    <meta name="description" content="Why random k-fold cross-validation produces wildly optimistic ROC AUC and Brier scores on time-ordered sports data. How to implement walk-forward and expanding-window splits in Python, and how to detect leakage that survives the obvious fixes.">
+    <link rel="canonical" href="https://codefixsolution.com/time-series-cross-validation-sports-models/">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 700; margin: 24px 0 10px; color: var(--text); }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+        th { color: #888; font-weight: 600; text-transform: uppercase; font-size: 12px; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+
+    <div class="container">
+        <article>
+            <h1>Time-Series Cross-Validation for Sports Models: Why K-Fold Lies</h1>
+            <div class="meta">May 5, 2026 &middot; 14 min read &middot; Python, Cross-Validation, Sports ML</div>
+
+            <p>You trained an XGBoost model on 5 seasons of NBA play-by-play. <code>cross_val_score</code> with <code>cv=5</code> returns a mean ROC AUC of 0.94 and a Brier score of 0.038. You ship it. Live performance: AUC 0.78, Brier 0.21. The model didn't suddenly forget how to predict basketball &mdash; the validation framework was lying.</p>
+
+            <p>Random k-fold cross-validation is the default in scikit-learn for a reason: it's a sane choice for IID tabular data. Sports data isn't IID. There's a strict temporal ordering, the underlying distribution shifts over seasons, and adjacent samples (consecutive plays in the same game) are statistically dependent in ways that make random splits leak future information into training. This post explains the failure modes, walks through three time-aware CV strategies in Python, and shows how to detect the subtler leakage that survives even the obvious fixes.</p>
+
+            <h2>How K-Fold Lies on Sports Data</h2>
+
+            <p>Random k-fold puts game N's third-quarter play-by-play in the train set and that same game's fourth-quarter play-by-play in the test set. The model "predicts" the fourth quarter having seen the third &mdash; a luxury it never has in production. AUC is inflated by the trivial information shared between adjacent rows: same lineup, same matchup, same momentum.</p>
+
+            <p>It gets worse. Even at the game level &mdash; if you do GroupKFold by <code>game_id</code> &mdash; the splits still mix seasons. A test fold from October 2023 gets predictions from a model trained on data through April 2024. Players whose careers were largely after October 2023 contribute training examples that "leak" their future style of play into the prediction of an earlier game. Subtle but real.</p>
+
+            <p>Here's a quick experiment we ran on 5 seasons of NCAAMB data (~5,300 games, ~890,000 play-by-play rows). Same XGBoost classifier, same features, three CV strategies:</p>
+
+            <table>
+                <tr><th>CV Strategy</th><th>ROC AUC</th><th>Brier</th><th>Live AUC</th></tr>
+                <tr><td>Random KFold (5)</td><td>0.943</td><td>0.038</td><td>0.78</td></tr>
+                <tr><td>GroupKFold by game (5)</td><td>0.872</td><td>0.082</td><td>0.78</td></tr>
+                <tr><td>Walk-forward by season</td><td>0.791</td><td>0.151</td><td>0.78</td></tr>
+            </table>
+
+            <p>Walk-forward is the only one whose CV score matches live performance. The other two over-promise by 6-15 AUC points. If you ship based on the random k-fold number, you'll be devastated when production reality arrives.</p>
+
+            <h2>Strategy 1: Walk-Forward (Sliding Window)</h2>
+
+            <p>Walk-forward splits respect time. Train on data up to time T; test on data from T+1 to T+H (the holdout horizon); slide the window forward and repeat. Implementation in pandas:</p>
+
+<pre><code>import numpy as np
+import pandas as pd
+from xgboost import XGBClassifier
+from sklearn.metrics import roc_auc_score, brier_score_loss
+
+def walk_forward_cv(df, feature_cols, target_col, ts_col,
+                    train_window_days=540, test_window_days=90, step_days=90):
+    """
+    Train on a sliding window, test on the immediately following window.
+    Returns list of (auc, brier, n_test) per fold.
+    """
+    df = df.sort_values(ts_col).reset_index(drop=True)
+    t_min, t_max = df[ts_col].min(), df[ts_col].max()
+
+    results = []
+    train_start = t_min
+    while True:
+        train_end = train_start + pd.Timedelta(days=train_window_days)
+        test_end = train_end + pd.Timedelta(days=test_window_days)
+        if test_end &gt; t_max:
+            break
+
+        train = df[(df[ts_col] &gt;= train_start) &amp; (df[ts_col] &lt; train_end)]
+        test = df[(df[ts_col] &gt;= train_end) &amp; (df[ts_col] &lt; test_end)]
+        if len(train) &lt; 1000 or len(test) &lt; 200:
+            train_start += pd.Timedelta(days=step_days)
+            continue
+
+        model = XGBClassifier(n_estimators=300, max_depth=5,
+                              learning_rate=0.05, eval_metric="logloss")
+        model.fit(train[feature_cols], train[target_col])
+        probs = model.predict_proba(test[feature_cols])[:, 1]
+
+        results.append({
+            "train_end": train_end,
+            "auc": roc_auc_score(test[target_col], probs),
+            "brier": brier_score_loss(test[target_col], probs),
+            "n_test": len(test),
+        })
+        train_start += pd.Timedelta(days=step_days)
+
+    return pd.DataFrame(results)</code></pre>
+
+            <p>The fold-by-fold results expose stability problems random k-fold hides. If your model's AUC drops from 0.82 in 2019 folds to 0.71 in 2024 folds, that's regime drift. K-fold averages it away into a single misleading number. Walk-forward shows you the trajectory.</p>
+
+            <h2>Strategy 2: Expanding Window</h2>
+
+            <p>Expanding window keeps the start of the train set fixed at <code>t_min</code> and grows it forward. Each fold has more training data than the last. This matches how production retraining typically works (you accumulate data over time and refit periodically) but it gives unequal-sized folds:</p>
+
+<pre><code>def expanding_window_cv(df, feature_cols, target_col, ts_col,
+                        initial_train_days=720, test_window_days=90, step_days=90):
+    df = df.sort_values(ts_col).reset_index(drop=True)
+    t_min, t_max = df[ts_col].min(), df[ts_col].max()
+
+    results = []
+    train_end = t_min + pd.Timedelta(days=initial_train_days)
+    while True:
+        test_end = train_end + pd.Timedelta(days=test_window_days)
+        if test_end &gt; t_max:
+            break
+
+        train = df[df[ts_col] &lt; train_end]
+        test = df[(df[ts_col] &gt;= train_end) &amp; (df[ts_col] &lt; test_end)]
+
+        model = XGBClassifier(n_estimators=300, max_depth=5,
+                              learning_rate=0.05, eval_metric="logloss")
+        model.fit(train[feature_cols], train[target_col])
+        probs = model.predict_proba(test[feature_cols])[:, 1]
+
+        results.append({
+            "train_end": train_end,
+            "n_train": len(train),
+            "auc": roc_auc_score(test[target_col], probs),
+            "brier": brier_score_loss(test[target_col], probs),
+        })
+        train_end += pd.Timedelta(days=step_days)
+
+    return pd.DataFrame(results)</code></pre>
+
+            <p>Use expanding window when older data is still informative (deep team-level features that change slowly). Use sliding window when concept drift is fast (rule changes, meta shifts in esports, post-COVID NBA pace) and old data hurts more than it helps.</p>
+
+            <h2>Strategy 3: Season-Based Splits</h2>
+
+            <p>For sports with sharp season boundaries, a season-based split is the cleanest formulation: train on seasons 1 through N&minus;1, test on season N. This matches the deployment pattern (you retrain in the offseason and run all season) and avoids weird mid-season cuts where playoff teams behave differently than regular-season teams.</p>
+
+<pre><code>def season_walk_forward(df, feature_cols, target_col, season_col,
+                        min_train_seasons=2):
+    seasons = sorted(df[season_col].unique())
+    results = []
+    for i in range(min_train_seasons, len(seasons)):
+        train_seasons = seasons[:i]
+        test_season = seasons[i]
+        train = df[df[season_col].isin(train_seasons)]
+        test = df[df[season_col] == test_season]
+
+        model = XGBClassifier(n_estimators=300, max_depth=5,
+                              learning_rate=0.05, eval_metric="logloss")
+        model.fit(train[feature_cols], train[target_col])
+        probs = model.predict_proba(test[feature_cols])[:, 1]
+
+        results.append({
+            "test_season": test_season,
+            "n_train": len(train),
+            "n_test": len(test),
+            "auc": roc_auc_score(test[target_col], probs),
+            "brier": brier_score_loss(test[target_col], probs),
+        })
+    return pd.DataFrame(results)</code></pre>
+
+            <p>This is what we use as the canonical CV for sports models in production. It's interpretable (one row per season is easy to read), it tests on out-of-distribution data (the test season has new players, new rules, new tactics), and it's directly comparable across model versions.</p>
+
+            <h2>The Subtler Leakage You Won't Catch</h2>
+
+            <p>Even with proper walk-forward CV, leakage can sneak in through feature engineering. Three common cases:</p>
+
+            <h3>1. Season-Aggregated Features</h3>
+
+            <p>If your feature is "team's offensive rating this season," computed over the entire season's games, you're leaking. The October version of that feature shouldn't include March games. Fix: compute features as-of the prediction date.</p>
+
+<pre><code># Wrong: this aggregates the whole season including future games
+team_ortg = df.groupby(["team", "season"])["ortg"].transform("mean")
+
+# Right: rolling mean over only past games
+df = df.sort_values(["team", "ts"])
+team_ortg = (df.groupby("team")["ortg"]
+              .rolling(window=20, min_periods=5)
+              .mean()
+              .reset_index(level=0, drop=True)
+              .shift(1))                 # exclude current game</code></pre>
+
+            <h3>2. Elo Ratings Built In Reverse</h3>
+
+            <p>If you build Elo ratings by iterating through the historical match log, that's correct. If you load Elo ratings from a snapshot file that was computed on the full dataset, including future games, your training features have peeked. We hit this once and the model's "AUC" jumped by 0.08 &mdash; a clear sign something was off, but easy to mistake for genuine improvement.</p>
+
+            <h3>3. Calibration Set Reuse</h3>
+
+            <p>Calibration (isotonic, Platt) needs a held-out set. If that set overlaps with the training set, the calibrator memorizes training noise and your validation calibration is fictitious. Three-way split: train, calibration, test. None overlap, all are time-ordered.</p>
+
+<pre><code>def three_way_temporal_split(df, ts_col, train_frac=0.7, cal_frac=0.15):
+    df = df.sort_values(ts_col).reset_index(drop=True)
+    n = len(df)
+    i_train = int(n * train_frac)
+    i_cal = int(n * (train_frac + cal_frac))
+    return df.iloc[:i_train], df.iloc[i_train:i_cal], df.iloc[i_cal:]</code></pre>
+
+            <h2>Detecting Leakage Empirically</h2>
+
+            <p>If your train AUC is meaningfully higher than your test AUC even on a properly time-ordered split, you have leakage. The diagnostic that catches the most cases is the "shuffle the target" test: randomly permute the labels and re-run CV. The score should drop to chance (AUC ~0.5). If it doesn't, you have an information leak that survives randomization &mdash; usually because of a feature derived from the target downstream:</p>
+
+<pre><code>import numpy as np
+
+def label_permutation_test(df, feature_cols, target_col, ts_col, cv_func):
+    df_shuffled = df.copy()
+    df_shuffled[target_col] = np.random.permutation(df[target_col].values)
+    return cv_func(df_shuffled, feature_cols, target_col, ts_col)
+
+# AUC should be ~0.5 on permuted labels. If it's 0.6+, you have leakage.</code></pre>
+
+            <p>Another diagnostic: train a model on data <em>after</em> the test set's date and predict the test set. If the future-trained model is materially better than the past-trained model, that's expected (more data = better). If the past-trained model is better, you have leakage going the other way (train somehow knows the test labels).</p>
+
+            <div class="cta">
+                <p style="margin-bottom: 12px; color: var(--muted);">See production-grade time-aware CV in action across 10 sports</p>
+                <a href="https://zenhodl.net/methodology">View ZenHodl Methodology &rarr;</a>
+            </div>
+
+            <h2>Reporting CV Results Honestly</h2>
+
+            <p>A single AUC number from a five-fold split is almost always an overstatement. When publishing CV results, include:</p>
+
+            <ol>
+                <li><strong>Per-fold scores</strong>, not just the mean. Show the variance.</li>
+                <li><strong>Train and test sample sizes</strong> per fold. Small test folds are noisy.</li>
+                <li><strong>The CV strategy</strong> explicitly: "season walk-forward" or "expanding window with 90-day test horizon."</li>
+                <li><strong>The temporal range</strong> of each fold's test set. A 2024 test fold tells you about 2024; it doesn't tell you about 2025.</li>
+                <li><strong>Calibration metrics</strong> alongside discrimination metrics. AUC + Brier + ECE.</li>
+            </ol>
+
+            <p>This is not academic rigor for its own sake. It's the difference between knowing your model is shippable and finding out the hard way.</p>
+
+            <h2>When Random K-Fold Is Actually Fine</h2>
+
+            <p>Two cases where random CV is the right choice on sports data:</p>
+
+            <ol>
+                <li><strong>Sport-agnostic embeddings.</strong> If you're learning a player embedding from career-long stats with no temporal feature, random CV by player is reasonable.</li>
+                <li><strong>Synthetic / simulated data.</strong> If your data is generated from a stationary process you control, IID assumptions hold and random CV is fine.</li>
+            </ol>
+
+            <p>Everywhere else &mdash; play-by-play, game outcomes, in-game win probability &mdash; default to walk-forward. The cost is a slightly more complex split function. The benefit is a CV score you can actually trust.</p>
+
+            <h2>Common Pitfalls Recap</h2>
+
+            <ol>
+                <li><strong>Random k-fold on time-ordered data</strong> &mdash; inflates AUC by 6-15 points</li>
+                <li><strong>GroupKFold by game without time ordering</strong> &mdash; better, still leaks across seasons</li>
+                <li><strong>Aggregating features across the entire season</strong> &mdash; even with walk-forward CV, this leaks</li>
+                <li><strong>Reusing the test set for hyperparameter tuning</strong> &mdash; tune on the calibration set, evaluate on test once</li>
+                <li><strong>Reporting only the mean CV score</strong> &mdash; per-fold variance is the diagnostic</li>
+                <li><strong>Skipping the label-permutation test</strong> &mdash; it catches the deepest leaks</li>
+            </ol>
+
+            <h2>Related Reading</h2>
+            <ul>
+                <li><a href="/python-xgboost-probability-calibration/">Calibrating XGBoost Probabilities</a> &mdash; calibration depends on a clean held-out split, which time-aware CV makes possible.</li>
+                <li><a href="/feature-engineering-sports-win-probability/">Feature Engineering for Sports Win Probability</a> &mdash; the features whose temporal validity you have to verify.</li>
+                <li><a href="/jupyter-to-production-ml-api/">From Jupyter to Production</a> &mdash; deploying the model whose CV you finally trust.</li>
+                <li><a href="/build-march-madness-prediction-model/">Build a March Madness Prediction Model</a> &mdash; season walk-forward applied to NCAAMB.</li>
+                <li><a href="https://zenhodl.net/results">ZenHodl Live Results</a> &mdash; what production-grade CV looks like in deployed sports models.</li>
+            </ul>
+        </article>
+    </div>
+
+    <footer><div class="container">&copy; 2026 CodeFix Solution</div></footer>
+</body>
+</html>
