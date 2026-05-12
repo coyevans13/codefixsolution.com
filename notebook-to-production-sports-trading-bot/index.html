@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>From Notebook to Production: Shipping Your First Sports Trading Bot &mdash; CodeFix Solution</title>
+    <meta name="description" content="Step-by-step guide for taking a sports prediction model out of a Jupyter notebook and turning it into a production trading bot. Architecture, persistence, monitoring, deployment — the parts the notebook never taught you.">
+    <link rel="canonical" href="https://codefixsolution.com/notebook-to-production-sports-trading-bot/">
+    <meta property="og:title" content="From Notebook to Production: Shipping Your First Sports Trading Bot">
+    <meta property="og:description" content="The discipline of moving from prototype to production for a sports trading bot — persistence, monitoring, supervision, deployment.">
+    <meta property="og:url" content="https://codefixsolution.com/notebook-to-production-sports-trading-bot/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+    <div class="container">
+        <article>
+            <h1>From Notebook to Production: Shipping Your First Sports Trading Bot</h1>
+            <div class="meta">May 11, 2026 &middot; 13 min read &middot; Python, Production, Deployment, Trading Bots</div>
+
+            <p>You have a Jupyter notebook that produces calibrated win probabilities. You have backtested a strategy that looks profitable. The next step is the hard part: turning the notebook into a service that runs unattended, places real orders against a real market, recovers from crashes, and surfaces the right alerts when something breaks. This post is the practical playbook for that transition.</p>
+
+            <p>The model in your notebook is maybe 20% of the work. The other 80% is what we cover here.</p>
+
+            <h2>What changes between notebook and production</h2>
+            <p>A notebook lives inside one Python process. State is in memory. If something goes wrong, you re-run the cell. The model is loaded once and runs against a static dataset. There are no concurrent users, no failures, no clocks.</p>
+            <p>A production trading bot lives in a long-running process under a supervisor. State must persist across restarts. Failures must be handled gracefully. Concurrent events arrive on the network and must be processed in the right order. A clock advances continuously and the bot must keep up.</p>
+            <p>Each of those differences requires explicit engineering work that the notebook lets you skip.</p>
+
+            <h2>Step 1: Extract from the notebook</h2>
+            <p>Move the modeling code out of the notebook into a real Python module. Save the trained model to a pickle file. Replace the notebook's data loading with a function that pulls live data instead of static CSVs.</p>
+            <pre><code># notebook/research_v3.ipynb &rarr; bot/model.py
+import pickle
+from sklearn.isotonic import IsotonicRegression
+from xgboost import XGBClassifier
+
+class ProductionModel:
+    def __init__(self, model_path: str):
+        with open(model_path, "rb") as f:
+            self.clf, self.iso = pickle.load(f)
+    def predict(self, features) -&gt; float:
+        raw = self.clf.predict_proba([features])[:, 1][0]
+        return float(self.iso.transform([raw])[0])
+
+# Save once after training:
+# with open("model.pkl", "wb") as f:
+#     pickle.dump((clf, iso), f)</code></pre>
+            <p>The pickle file becomes a versioned artifact. Always backup before retraining (we use a timestamped <code>backups/</code> directory). One corrupted pickle from an interrupted training job can take you offline for hours.</p>
+
+            <h2>Step 2: Build the live data ingestion</h2>
+            <p>Notebooks read CSVs. Production reads live feeds. For sports, that usually means polling ESPN's JSON endpoints (or an official league API) on a sport-appropriate cadence and maintaining an in-memory cache.</p>
+            <pre><code>import asyncio, time
+from typing import Optional
+
+class LiveStateCache:
+    def __init__(self):
+        self._state = {}  # game_id -&gt; dict
+        self._ts = {}     # game_id -&gt; epoch
+
+    def update(self, game_id: str, state: dict):
+        self._state[game_id] = state
+        self._ts[game_id] = time.time()
+
+    def get(self, game_id: str, max_age_s: float = 30.0) -&gt; Optional[dict]:
+        if game_id not in self._state:
+            return None
+        if time.time() - self._ts[game_id] &gt; max_age_s:
+            return None  # Stale
+        return self._state[game_id]
+
+CACHE = LiveStateCache()
+
+async def poll_loop(sport: str, cadence: float):
+    while True:
+        try:
+            data = fetch_scoreboard(sport)
+            for ev in data.get("events", []):
+                CACHE.update(ev["id"], parse_event(ev))
+        except Exception as e:
+            logger.exception(f"Poll failed for {sport}: {e}")
+        await asyncio.sleep(cadence)</code></pre>
+            <p>The poll loop runs as a background task. The bot's main loop reads from the cache. The two are decoupled so a slow upstream does not block the bot.</p>
+
+            <h2>Step 3: Persist your trade log</h2>
+            <p>A bot that loses its trade history on restart is dangerous. It might re-buy positions it already holds. It might miss settlements it should have processed. The fix is an append-only trade log that survives restarts.</p>
+            <pre><code>import json
+from pathlib import Path
+from datetime import datetime, timezone
+
+TRADE_LOG = Path("trades.jsonl")
+
+def log_trade(game_id: str, side: str, size: float, price_c: float, fair_prob: float):
+    rec = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "game_id": game_id,
+        "side": side,
+        "size": size,
+        "price_c": price_c,
+        "fair_prob": fair_prob,
+        "resolved": None,
+    }
+    TRADE_LOG.open("a").write(json.dumps(rec) + "\n")
+
+def load_open_positions() -&gt; list[dict]:
+    if not TRADE_LOG.exists():
+        return []
+    open_pos = []
+    for line in TRADE_LOG.open("r"):
+        rec = json.loads(line)
+        if rec.get("resolved") is None:
+            open_pos.append(rec)
+    return open_pos</code></pre>
+            <p>JSONL is the right format. Each trade is one line. Append is atomic on most filesystems. You can <code>tail -f</code> the file to watch live activity. You can read it with pandas for analysis.</p>
+
+            <h2>Step 4: Reconstruct state on startup</h2>
+            <p>When the bot restarts, it reads the trade log and rebuilds its in-memory position map. Without this step, the bot wakes up thinking it has zero positions, even when there are several open trades on Polymarket.</p>
+            <pre><code>def restore_positions():
+    positions = {}
+    for trade in load_open_positions():
+        gid = trade["game_id"]
+        positions.setdefault(gid, []).append(trade)
+    return positions
+
+# In bot startup
+positions = restore_positions()
+logger.info(f"Restored {sum(len(v) for v in positions.values())} open positions across {len(positions)} games")</code></pre>
+
+            <h2>Step 5: Add a supervisor</h2>
+            <p>A bot that crashes and stays down is worse than no bot. Run it under systemd (Linux) or launchd (macOS) with auto-restart. Systemd unit:</p>
+            <pre><code>[Unit]
+Description=My Sports Trading Bot
+After=network-online.target
+
+[Service]
+Type=simple
+User=mybot
+WorkingDirectory=/opt/mybot
+ExecStart=/opt/mybot/venv/bin/python -m bot.main
+Restart=always
+RestartSec=15
+StandardOutput=append:/var/log/mybot/bot.log
+StandardError=append:/var/log/mybot/bot.log
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+            <p>Restart=always with RestartSec=15 prevents tight crash loops while ensuring the bot recovers from transient errors. Logs go to a file you can <code>tail -f</code>.</p>
+
+            <h2>Step 6: Build monitoring</h2>
+            <p>The most common production failure mode is silent. The bot is "running" but not actually trading. Three things to monitor:</p>
+            <ul>
+                <li><strong>Heartbeat:</strong> the bot writes a timestamp to a file every minute. An external uptime check (Healthchecks.io, BetterStack) pings the file's mtime and alerts if it's stale.</li>
+                <li><strong>Trade rate:</strong> count trades per hour. If it drops to zero on a busy game night, something is broken.</li>
+                <li><strong>Closing Line Value:</strong> compute daily. If it trends below your threshold, the model is degrading.</li>
+            </ul>
+            <pre><code>import time, json
+from pathlib import Path
+
+HEARTBEAT = Path("heartbeat.json")
+
+def write_heartbeat():
+    HEARTBEAT.write_text(json.dumps({
+        "ts": time.time(),
+        "iso": datetime.now(timezone.utc).isoformat(),
+    }))
+
+# In bot main loop, every minute
+write_heartbeat()</code></pre>
+
+            <h2>Step 7: Deployment workflow</h2>
+            <p>You will iterate on the bot. Define a deploy workflow that is fast and safe:</p>
+            <ol>
+                <li>Edit code locally.</li>
+                <li>Run unit tests.</li>
+                <li>rsync changes to the server (excluding stateful files like trade logs).</li>
+                <li>Run a remote import smoke test (catches syntax errors).</li>
+                <li>systemctl restart the service.</li>
+                <li>curl the health endpoint to verify it came back up.</li>
+            </ol>
+            <p>Wrap this in a shell script. Run it 50 times a day during early development. Once you have confidence in the workflow, the friction of deploying drops to near-zero.</p>
+
+            <h2>Step 8: Risk controls</h2>
+            <p>Before live trading, add hard limits:</p>
+            <ul>
+                <li><strong>Max position size per trade.</strong> Prevents a buggy quarter-Kelly calculation from sizing 50% of bankroll.</li>
+                <li><strong>Max total exposure.</strong> Prevents the bot from holding more positions than your bankroll supports.</li>
+                <li><strong>Daily loss limit.</strong> Hard stop if session P&amp;L drops below threshold.</li>
+                <li><strong>Per-sport circuit breaker.</strong> Disable a sport when its rolling 30-day ROI drops below -5%.</li>
+            </ul>
+            <p>These controls feel paranoid until the day they save you. Add them all before going live, not after the first incident.</p>
+
+            <h2>What separates the bots that survive</h2>
+            <p>Three patterns across the bots that have run in production for many months without intervention:</p>
+            <p>They restart cleanly. State persists. The bot can be killed and brought back at any moment without losing track of positions or producing duplicate trades.</p>
+            <p>They monitor themselves. Heartbeats, trade-rate alerts, and CLV monitoring catch the silent failure modes that watching P&amp;L would miss.</p>
+            <p>They fail loud, not silent. Every exception logs. Every uncovered edge case raises an alert. The cost of fixing one bug today is much lower than the cost of debugging six months of compounded weird behavior.</p>
+
+            <h2>The bottom line</h2>
+            <p>Shipping a sports trading bot is mostly engineering discipline, not modeling. The modeling work in your notebook is necessary. The persistence, monitoring, supervision, and deployment work is what makes it actually run unattended for months. Build the eight steps above before going live. The compound returns start when the entire stack is in place &mdash; not when any single piece is perfect.</p>
+
+            <div class="cta">
+                <h3>The full Polymarket Bot Course</h3>
+                <p>Six Jupyter modules covering everything from ESPN scraping to live deployment, including the production patterns in this post. $49 standalone or included with every ZenHodl API plan.</p>
+                <a href="https://zenhodl.net/products" target="_blank" rel="noopener">Get the course</a>
+            </div>
+        </article>
+    </div>
+    <footer><div class="container">CodeFix Solution &middot; Developer tutorials and code fixes &middot; <a href="https://zenhodl.net">Powered by ZenHodl</a></div></footer>
+</body>
+</html>

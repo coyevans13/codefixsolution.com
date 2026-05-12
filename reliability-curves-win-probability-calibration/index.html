@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calibrating Win-Probability Models: Reliability Curves Using 100,000+ Game-State Snapshots &mdash; CodeFix Solution</title>
+    <meta name="description" content="How to build and read reliability diagrams for sports win-probability models. Compute Expected Calibration Error, fit isotonic and Platt calibrators, and validate on 100,000+ game-state snapshots. Working Python code.">
+    <link rel="canonical" href="https://codefixsolution.com/reliability-curves-win-probability-calibration/">
+    <meta property="og:title" content="Reliability Curves for Win-Probability Models: A Calibration Tutorial">
+    <meta property="og:description" content="Build reliability diagrams, compute Expected Calibration Error, fit isotonic regression — production calibration tutorial in Python.">
+    <meta property="og:url" content="https://codefixsolution.com/reliability-curves-win-probability-calibration/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); color: #ccc; }
+        th { color: var(--text); font-weight: 600; background: #161616; }
+        strong { color: var(--text); }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+    <div class="container">
+        <article>
+            <h1>Calibrating Win-Probability Models: Reliability Curves Using 100,000+ Game-State Snapshots</h1>
+            <div class="meta">May 11, 2026 &middot; 14 min read &middot; Python, Calibration, Isotonic Regression, Sklearn</div>
+
+            <p>An XGBoost classifier produces probabilities. The probabilities are usually wrong &mdash; not in the sense that they pick the wrong winner, but in the sense that "60% confidence" predictions do not actually win 60% of the time. Sometimes they win 55%. Sometimes 65%. The mismatch between predicted probability and observed frequency is called miscalibration, and fixing it is the difference between a model you can size positions against and a model that will quietly destroy your bankroll.</p>
+
+            <p>This post walks through the full calibration pipeline for sports win-probability models: build reliability curves on 100,000+ game-state snapshots, compute Expected Calibration Error, fit isotonic and Platt calibrators, and validate on holdout data. Working Python throughout.</p>
+
+            <h2>The reliability curve</h2>
+            <p>A reliability curve plots predicted probability against observed frequency. Bin your predictions into deciles (or any number of bins): the bottom 10% of predictions go in bin 1, the next 10% in bin 2, etc. For each bin, compute the mean predicted probability and the actual win rate.</p>
+            <p>If the model is well-calibrated, the points lie on the diagonal y=x. Predictions of 30% have an actual 30% win rate. Predictions of 70% have an actual 70% win rate.</p>
+            <p>Most untreated XGBoost models do not lie on the diagonal. They are overconfident at the extremes &mdash; the model says 90% but the actual rate is 80%. Sometimes they are under-confident in the middle &mdash; the model says 55% but the actual rate is 60%.</p>
+
+            <pre><code>import numpy as np
+
+def reliability_data(y_true, y_prob, n_bins=15):
+    bins = np.linspace(0, 1, n_bins + 1)
+    points = []
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (y_prob &gt;= lo) & (y_prob &lt; hi)
+        n = mask.sum()
+        if n == 0:
+            continue
+        mean_pred = y_prob[mask].mean()
+        actual = y_true[mask].mean()
+        points.append({"bin_lo": lo, "bin_hi": hi, "n": n,
+                       "mean_pred": mean_pred, "actual": actual})
+    return points</code></pre>
+
+            <p>Plot mean_pred vs actual with point sizes proportional to bin n. Add the diagonal. The further the points are from the diagonal, the worse the calibration.</p>
+
+            <h2>Expected Calibration Error</h2>
+            <p>Expected Calibration Error (ECE) is the single number summary of the reliability curve. It is the bin-size-weighted average of the absolute difference between mean prediction and actual frequency:</p>
+            <pre><code>def expected_calibration_error(y_true, y_prob, n_bins=15):
+    bins = np.linspace(0, 1, n_bins + 1)
+    ece = 0.0
+    n_total = len(y_true)
+    for lo, hi in zip(bins[:-1], bins[1:]):
+        mask = (y_prob &gt;= lo) & (y_prob &lt; hi)
+        if mask.sum() == 0:
+            continue
+        bin_acc = y_true[mask].mean()
+        bin_conf = y_prob[mask].mean()
+        ece += (mask.sum() / n_total) * abs(bin_acc - bin_conf)
+    return ece</code></pre>
+            <p>For sports win-probability models, the practical thresholds are:</p>
+            <table>
+                <tr><th>ECE</th><th>Interpretation</th></tr>
+                <tr><td>&lt; 0.03</td><td>Excellent. Production-ready.</td></tr>
+                <tr><td>0.03 - 0.05</td><td>Good. Safe for Kelly sizing.</td></tr>
+                <tr><td>0.05 - 0.07</td><td>Marginal. Recalibrate before betting.</td></tr>
+                <tr><td>0.07 - 0.10</td><td>Bad. Do not size positions against.</td></tr>
+                <tr><td>&gt; 0.10</td><td>Broken. Retrain or rebuild.</td></tr>
+            </table>
+
+            <h2>Isotonic calibration</h2>
+            <p>Isotonic regression learns a non-parametric monotonic mapping from predicted probabilities to calibrated probabilities. It is the right default for sports models because it can correct any monotonic miscalibration without imposing a specific functional form.</p>
+            <pre><code>from sklearn.isotonic import IsotonicRegression
+
+def fit_isotonic(y_true_calib, y_prob_calib):
+    iso = IsotonicRegression(out_of_bounds="clip")
+    iso.fit(y_prob_calib, y_true_calib)
+    return iso
+
+# Fit on a held-out calibration set, NOT the training set
+iso = fit_isotonic(y_train_calib, raw_pred_calib)
+
+# At inference
+def predict_calibrated(features):
+    raw = clf.predict_proba(features)[:, 1]
+    return iso.transform(raw)</code></pre>
+            <p>Critical: fit the calibrator on a separate held-out set, not on the training data. Fitting on training data produces an overconfident calibrator that does not generalize.</p>
+
+            <h2>Platt scaling</h2>
+            <p>Platt scaling fits a logistic regression to map raw probabilities to calibrated ones. It is more constrained than isotonic (sigmoid shape only) but works well when the miscalibration is sigmoid-like and the calibration set is small.</p>
+            <pre><code>from sklearn.linear_model import LogisticRegression
+
+def fit_platt(y_true_calib, y_prob_calib):
+    lr = LogisticRegression()
+    lr.fit(y_prob_calib.reshape(-1, 1), y_true_calib)
+    return lr
+
+platt = fit_platt(y_train_calib, raw_pred_calib)
+
+def predict_platt(features):
+    raw = clf.predict_proba(features)[:, 1].reshape(-1, 1)
+    return platt.predict_proba(raw)[:, 1]</code></pre>
+            <p>For sports models with 10,000+ calibration samples, isotonic typically produces lower ECE than Platt. For models with under 1,000 samples, Platt is more stable.</p>
+
+            <h2>The 100,000+ snapshot dataset</h2>
+            <p>Calibration matters more for in-play models than pre-game models because the snapshot count is much higher. A single NBA game produces 30-50 snapshots (one per minute or per significant event). A full season produces 30,000-50,000 snapshots. Three seasons produces 100,000+.</p>
+            <p>With this many calibration samples, isotonic regression has plenty to work with and ECE typically drops to 0.02-0.04 after calibration. The reliability curve looks essentially flat against the diagonal.</p>
+
+            <pre><code># Production pipeline
+from sklearn.model_selection import train_test_split
+
+# Hold out 20% for calibration
+X_model, X_calib, y_model, y_calib = train_test_split(
+    X_full, y_full, test_size=0.2, random_state=42
+)
+
+# Train base model on the 80%
+clf = XGBClassifier(n_estimators=400, max_depth=5, learning_rate=0.05)
+clf.fit(X_model, y_model)
+
+# Get raw predictions on the 20% calibration set
+raw_calib = clf.predict_proba(X_calib)[:, 1]
+
+# Fit isotonic on calibration set
+iso = IsotonicRegression(out_of_bounds="clip")
+iso.fit(raw_calib, y_calib)
+
+# Final ECE
+calibrated_calib = iso.transform(raw_calib)
+print(f"Pre-calibration ECE:  {expected_calibration_error(y_calib, raw_calib):.4f}")
+print(f"Post-calibration ECE: {expected_calibration_error(y_calib, calibrated_calib):.4f}")</code></pre>
+
+            <p>A typical output for a well-trained NBA in-play model might show pre-calibration ECE around 0.05 and post-calibration ECE around 0.03. Real lift from a single calibration step.</p>
+
+            <h2>Per-sport calibration tables</h2>
+            <p>Different sports have different miscalibration patterns. NCAAMB models tend to be slightly overconfident; soccer models tend to be slightly under-confident. Fit a separate isotonic per sport rather than a global one. The per-sport approach typically reduces ECE by an additional 0.01-0.02.</p>
+
+            <h2>Live recalibration</h2>
+            <p>Calibration drifts over the season. The fitted isotonic from October is not perfect by April. Two countermeasures:</p>
+            <p><strong>Periodic retraining:</strong> refit the isotonic monthly or weekly on the most recent N=500 outcomes per sport.</p>
+            <p><strong>Live recalibrator:</strong> maintain a rolling window of recent (prediction, outcome) pairs and refit on every settlement event. The recalibrator runs in-process and adjusts model output at inference time.</p>
+            <pre><code>from collections import deque
+
+class LiveRecalibrator:
+    def __init__(self, window=500):
+        self.window = window
+        self.preds = deque(maxlen=window)
+        self.actuals = deque(maxlen=window)
+        self._iso = None
+    def record(self, pred, actual):
+        self.preds.append(pred)
+        self.actuals.append(actual)
+        if len(self.preds) &gt;= 50:
+            self._iso = IsotonicRegression(out_of_bounds="clip")
+            self._iso.fit(list(self.preds), list(self.actuals))
+    def adjust(self, raw_prob):
+        if self._iso is None:
+            return raw_prob
+        return float(self._iso.transform([raw_prob])[0])</code></pre>
+
+            <h2>The bottom line</h2>
+            <p>Calibration is the difference between a model that picks winners and a model whose probabilities are safe to size positions against. The pipeline is small &mdash; reliability curve, ECE, isotonic regression, periodic refit &mdash; but each piece is necessary. Skip any of them and Kelly sizing breaks.</p>
+
+            <div class="cta">
+                <h3>Per-sport calibrated probabilities, ECE published</h3>
+                <p>ZenHodl publishes Expected Calibration Error per sport on a public methodology page. Calibrated probabilities for 11 sports. Free seven-day trial.</p>
+                <a href="https://zenhodl.net/pricing" target="_blank" rel="noopener">Try ZenHodl free</a>
+            </div>
+        </article>
+    </div>
+    <footer><div class="container">CodeFix Solution &middot; Developer tutorials and code fixes &middot; <a href="https://zenhodl.net">Powered by ZenHodl</a></div></footer>
+</body>
+</html>

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Module 1 Deep Dive: Scraping ESPN's Scoreboard Endpoints for Every NBA Game in a Season &mdash; CodeFix Solution</title>
+    <meta name="description" content="Scrape every NBA game in a full season from ESPN's undocumented JSON scoreboard endpoints. Working Python code with date iteration, rate limiting, retry, deduplication, and parquet output for downstream ML.">
+    <link rel="canonical" href="https://codefixsolution.com/module-1-scraping-espn-scoreboard-nba/">
+    <meta property="og:title" content="Module 1: Scraping ESPN's Scoreboard for Every NBA Game in a Season">
+    <meta property="og:description" content="Complete Python tutorial: ESPN scoreboard endpoints, full-season iteration, rate limiting, retry, parquet output. The starting module of the Polymarket Bot Course.">
+    <meta property="og:url" content="https://codefixsolution.com/module-1-scraping-espn-scoreboard-nba/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+        strong { color: var(--text); }
+        blockquote { border-left: 3px solid var(--accent); padding: 8px 20px; margin: 24px 0; color: #bbb; background: var(--card); border-radius: 0 8px 8px 0; }
+        .cta { background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 32px 0; text-align: center; }
+        .cta h3 { margin: 0 0 8px; border: none; padding: 0; }
+        .cta p { margin-bottom: 16px; }
+        .cta a { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; }
+        footer { border-top: 1px solid var(--border); padding: 30px 0; text-align: center; color: #555; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+    <div class="container">
+        <article>
+            <h1>Module 1 Deep Dive: Scraping ESPN's Scoreboard Endpoints for Every NBA Game in a Season</h1>
+            <div class="meta">May 11, 2026 &middot; 12 min read &middot; Python, ESPN, Web Scraping, Data Pipeline</div>
+
+            <p>Building a sports prediction model starts with one question: where does the data come from? For NBA games specifically, the answer is ESPN's scoreboard JSON endpoints &mdash; undocumented, free, no auth required, and remarkably stable across years. This is the deep dive on Module 1 of our Polymarket Bot Course: scraping every NBA game in a full season into a clean parquet file ready for downstream ML.</p>
+
+            <h2>What you will end up with</h2>
+            <p>By the end of this module, you will have a parquet file containing every NBA game from the 2024-25 season &mdash; 1,230 regular-season games plus the playoffs &mdash; with columns:</p>
+            <ul>
+                <li><code>game_id</code> &mdash; ESPN's stable identifier</li>
+                <li><code>game_date</code> &mdash; ISO date</li>
+                <li><code>home_team, away_team</code> &mdash; abbreviation</li>
+                <li><code>home_score, away_score</code> &mdash; final</li>
+                <li><code>status</code> &mdash; "STATUS_FINAL" for completed games</li>
+                <li><code>venue, attendance</code> &mdash; metadata</li>
+            </ul>
+            <p>This dataset is the input to the rest of the course: feature engineering in Module 2, model training in Module 3, backtesting in Module 4, live deployment in Module 5.</p>
+
+            <h2>The endpoint</h2>
+            <p>ESPN's NBA scoreboard endpoint takes a date parameter:</p>
+            <pre><code>https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=20250215</code></pre>
+            <p>The date format is YYYYMMDD with no separators. The response is JSON containing all games on that date. To scrape an entire season, you iterate every day from October (season start) to June (Finals end).</p>
+
+            <h2>The naive scraper</h2>
+            <p>The simplest version that works:</p>
+            <pre><code>import requests
+from datetime import date, timedelta
+
+def fetch_day(d: date) -> dict:
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={d.strftime('%Y%m%d')}"
+    return requests.get(url, timeout=10).json()
+
+start = date(2024, 10, 22)
+end = date(2025, 6, 30)
+all_games = []
+d = start
+while d &lt;= end:
+    data = fetch_day(d)
+    for ev in data.get("events", []):
+        all_games.append(ev)
+    d += timedelta(days=1)</code></pre>
+            <p>This runs in about 5 minutes for a full season. It also has every problem a production scraper needs to handle: no rate limiting, no retry, no deduplication, no error handling. Let's fix each one.</p>
+
+            <h2>Defensive scraping</h2>
+            <pre><code>import requests, time, logging
+from datetime import date, timedelta
+
+logger = logging.getLogger(__name__)
+SESSION = requests.Session()
+SESSION.headers.update({"User-Agent": "MyBot/1.0 (educational)"})
+
+def fetch_day_safe(d: date, retries: int = 3) -> dict:
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={d.strftime('%Y%m%d')}"
+    for attempt in range(retries):
+        try:
+            r = SESSION.get(url, timeout=10)
+            if r.status_code == 429:
+                wait = int(r.headers.get("Retry-After", 2 ** attempt))
+                logger.warning(f"Rate limited on {d}, waiting {wait}s")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError) as e:
+            logger.warning(f"Fetch failed {d} attempt {attempt}: {e}")
+            time.sleep(2 ** attempt)
+    return {}</code></pre>
+            <p>Three things this version does right: respects the <code>Retry-After</code> header on 429 responses, exponentially backs off on transient errors, and returns an empty dict rather than crashing on total failure. The next day continues to scrape.</p>
+
+            <h2>Parsing one event into a row</h2>
+            <pre><code>def parse_event(ev: dict) -> dict | None:
+    try:
+        comp = ev["competitions"][0]
+        teams = comp["competitors"]
+        home = next(t for t in teams if t["homeAway"] == "home")
+        away = next(t for t in teams if t["homeAway"] == "away")
+        return {
+            "game_id": ev["id"],
+            "game_date": ev["date"][:10],
+            "home_team": home["team"]["abbreviation"],
+            "away_team": away["team"]["abbreviation"],
+            "home_score": int(home.get("score", 0)),
+            "away_score": int(away.get("score", 0)),
+            "status": ev["status"]["type"]["name"],
+            "venue": comp.get("venue", {}).get("fullName", ""),
+            "attendance": comp.get("attendance", 0),
+        }
+    except (KeyError, IndexError, StopIteration) as e:
+        logger.warning(f"Parse failed for event {ev.get('id')}: {e}")
+        return None</code></pre>
+            <p>The try/except is not optional. ESPN's response shape varies slightly between regular season, playoffs, postponed games, and forfeit games. A single malformed event should not crash the entire scrape.</p>
+
+            <h2>Deduplication</h2>
+            <p>The same game can appear in two days' scoreboards if it spans midnight UTC. Postponed games can have two game_ids. Always deduplicate by game_id before persisting:</p>
+            <pre><code>seen = set()
+unique_games = []
+for ev in all_games:
+    parsed = parse_event(ev)
+    if parsed is None:
+        continue
+    if parsed["game_id"] in seen:
+        continue
+    seen.add(parsed["game_id"])
+    unique_games.append(parsed)</code></pre>
+
+            <h2>Politeness: rate-limit yourself</h2>
+            <p>ESPN does not publish a rate limit, but their endpoints have throttled us at sustained rates above ~2 requests per second. Add a small sleep between requests:</p>
+            <pre><code>import time
+
+DELAY_S = 0.5  # 2 req/sec
+
+while d &lt;= end:
+    data = fetch_day_safe(d)
+    for ev in data.get("events", []):
+        all_games.append(ev)
+    d += timedelta(days=1)
+    time.sleep(DELAY_S)</code></pre>
+            <p>For a full season (about 250 days October to June), this adds about 2 minutes of total scrape time. Worth it to never get rate-limited.</p>
+
+            <h2>Persisting to parquet</h2>
+            <pre><code>import pandas as pd
+
+df = pd.DataFrame(unique_games)
+df = df[df["status"] == "STATUS_FINAL"]  # Drop in-progress and postponed
+df = df.sort_values(["game_date", "game_id"]).reset_index(drop=True)
+df.to_parquet("nba_games_2024_25.parquet")
+print(f"Saved {len(df)} completed games")</code></pre>
+            <p>Parquet is the right format for this dataset because it is columnar (fast to read specific columns) and compressed (small on disk). A full NBA season is around 1.5 MB on disk.</p>
+
+            <h2>Going beyond scoreboard: the summary endpoint</h2>
+            <p>The scoreboard gives you final scores. For modeling, you typically want play-by-play. ESPN's summary endpoint returns it:</p>
+            <pre><code>def fetch_summary(game_id: str) -> dict:
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event={game_id}"
+    return requests.get(url, timeout=15).json()
+
+summary = fetch_summary("401705412")
+plays = summary.get("plays", [])
+print(f"{len(plays)} plays in this game")</code></pre>
+            <p>Each play has period, clock, score after the play, type, and (sometimes) coordinates. This is the input to in-play win-probability models. We cover building those in Module 3.</p>
+
+            <h2>What can go wrong</h2>
+            <ul>
+                <li><strong>Time zones.</strong> ESPN's <code>date</code> field is UTC; some games on the West Coast cross midnight UTC and appear on two consecutive scoreboard days. Dedup catches this.</li>
+                <li><strong>Postponements.</strong> Postponed games sometimes get a new game_id when rescheduled. Sometimes they keep the original. Both happen. Dedup catches one but not the other &mdash; manual review is required for season-end completeness.</li>
+                <li><strong>Cancellations.</strong> Some games are cancelled outright. Their <code>status</code> will be <code>STATUS_CANCELLED</code>. Filter by status before modeling.</li>
+                <li><strong>Schema changes.</strong> ESPN occasionally changes a field's name or type. We have not seen a breaking change in years, but assume it can happen and write parsers defensively.</li>
+            </ul>
+
+            <h2>The bottom line</h2>
+            <p>A clean NBA season scrape is a foundational dataset for any prediction model. ESPN's free JSON endpoints make it easy. The 100 lines of Python in this post turn into a parquet file you can build the rest of your pipeline on. Module 2 (feature engineering) and Module 3 (model training) both consume this file directly.</p>
+
+            <div class="cta">
+                <h3>The full Polymarket Bot Course</h3>
+                <p>Six Jupyter modules: ESPN scraping, Elo, win-probability models, backtesting, live bot, deployment. $49 standalone or included with every ZenHodl API plan.</p>
+                <a href="https://zenhodl.net/products" target="_blank" rel="noopener">Get the course</a>
+            </div>
+        </article>
+    </div>
+    <footer><div class="container">CodeFix Solution &middot; Developer tutorials and code fixes &middot; <a href="https://zenhodl.net">Powered by ZenHodl</a></div></footer>
+</body>
+</html>
