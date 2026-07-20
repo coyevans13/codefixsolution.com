@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Working With Kalshi Order-Book Data in Python: L2 Depth + Trade Prints, Joined &mdash; CodeFix Solution</title>
+    <meta name="description" content="Kalshi's API serves trades and candles — not book history. A practical Python guide to working with captured Kalshi L2 depth and the executed trade tape: loading daily parquet, deduping prints by trade_id, joining prints to book snapshots, and building an order-flow imbalance feature.">
+    <link rel="canonical" href="https://codefixsolution.com/work-with-kalshi-order-book-data-python/">
+    <meta property="og:title" content="Working With Kalshi Order-Book Data in Python: L2 Depth + Trade Prints, Joined">
+    <meta property="og:description" content="Loading Kalshi L2 depth and trade-tape parquet in pandas, joining prints to snapshots, and building microstructure features — with the gotchas that actually bite.">
+    <meta property="og:url" content="https://codefixsolution.com/work-with-kalshi-order-book-data-python/">
+    <meta property="og:type" content="article">
+    <style>
+        :root { --bg: #0a0a0a; --card: #111; --border: #222; --text: #e5e5e5; --muted: #888; --accent: #22c55e; --code-bg: #0d1117; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.8; }
+        .container { max-width: 740px; margin: 0 auto; padding: 0 20px; }
+        header { border-bottom: 1px solid var(--border); padding: 20px 0; }
+        header a { color: var(--text); text-decoration: none; font-weight: 700; font-size: 18px; }
+        article { padding: 48px 0 60px; }
+        h1 { font-size: 34px; font-weight: 800; line-height: 1.2; margin-bottom: 16px; }
+        .meta { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+        h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+        h3 { font-size: 18px; font-weight: 600; margin: 28px 0 12px; }
+        p { margin-bottom: 16px; color: #ccc; }
+        ul, ol { margin: 0 0 16px 24px; color: #ccc; }
+        li { margin-bottom: 6px; }
+        a { color: var(--accent); }
+        code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-size: 14px; font-family: 'SF Mono', Monaco, monospace; }
+        pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; margin: 16px 0 24px; }
+        pre code { background: none; padding: 0; }
+        .callout { background: #0d1a12; border: 1px solid #1a3d28; border-radius: 8px; padding: 16px 20px; margin: 24px 0; }
+        .cta { border: 1px solid var(--accent); border-radius: 12px; padding: 24px; margin: 40px 0; text-align: center; }
+        .cta a.button { display: inline-block; background: var(--accent); color: #000; font-weight: 700; padding: 12px 28px; border-radius: 8px; text-decoration: none; margin-top: 12px; }
+        table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--text); }
+        footer { border-top: 1px solid var(--border); padding: 24px 0; color: var(--muted); font-size: 14px; }
+    </style>
+</head>
+<body>
+    <header><div class="container"><a href="/">CodeFix Solution</a></div></header>
+    <div class="container">
+        <article>
+            <h1>Working With Kalshi Order-Book Data in Python: L2 Depth + Trade Prints, Joined</h1>
+            <div class="meta">July 20, 2026 &middot; 11 min read</div>
+
+            <p>If you've tried to do microstructure research on Kalshi, you've hit the wall:
+            the public API gives you trades and candles, but no book history. There is no endpoint
+            for "show me the ladder at 19:42:31 last Tuesday." Book state has to be recorded live,
+            which means working from a capture — yours or someone else's.</p>
+
+            <p>This guide walks through the practical Python for working with one such capture:
+            daily parquet files of L2 depth (up to 20 levels per side, ~28-second snapshots) plus
+            the executed trade tape (prints with taker side and live game state). The patterns
+            apply to any book+tape dataset, but the code below runs as-is against the
+            <a href="https://zenhodl.net/products/kalshi_micro_tape">Kalshi Microstructure Tape</a>
+            (there's a $9 two-day slice with an identical schema if you want to follow along
+            without committing to the full archive).</p>
+
+            <h2>The two feeds, and why you want both</h2>
+
+            <table>
+                <tr><th>Feed</th><th>One row is…</th><th>Answers</th></tr>
+                <tr><td><code>depth/</code></td><td>(snapshot, ticker, side, level)</td><td>What would it have cost to trade size?</td></tr>
+                <tr><td><code>trades/</code></td><td>one executed print</td><td>What did people actually do?</td></tr>
+            </table>
+
+            <p>Depth without prints is a photograph. Prints without depth are footsteps with no
+            floor plan. Most public prediction-market datasets give you neither — at best a
+            last-price series, which can't distinguish a 1-lot from a 5,000-lot move.</p>
+
+            <h2>Loading a day of depth</h2>
+
+<pre><code>import pandas as pd
+
+depth = pd.read_parquet("depth/kalshi_depth_2026-07-12.parquet")
+# columns: timestamp (epoch s), ticker, sport, market_type, line,
+#          side ('bid'/'ask'), level (0=best), price_c (cents), size
+
+# family = the ticker prefix, e.g. KXMLBGAME-26JUL12-...
+depth["family"] = depth["ticker"].str.split("-").str[0]
+depth["ts"] = pd.to_datetime(depth["timestamp"], unit="s", utc=True)
+
+# top of book for one market
+tob = (depth[depth["level"] == 0]
+       .pivot_table(index=["ticker", "ts"], columns="side",
+                    values="price_c", aggfunc="first")
+       .rename(columns={"bid": "best_bid_c", "ask": "best_ask_c"}))
+tob["spread_c"] = tob["best_ask_c"] - tob["best_bid_c"]</code></pre>
+
+            <p>Two gotchas that bite everyone the first time:</p>
+            <ul>
+                <li><strong>Levels are capped at 20 per side.</strong> If your VWAP-to-size
+                calculation walks off level 19, the answer is "deeper than the data shows,"
+                not a fill price. Handle that case explicitly.</li>
+                <li><strong>Snapshots are polled, not event-driven.</strong> A gap between rows
+                means "no observation," never "no change." Resample with
+                <code>.asof()</code>-style joins, not forward-fill over long gaps.</li>
+            </ul>
+
+            <h2>The trade tape: two timestamps, one trap</h2>
+
+<pre><code>trades = pd.read_parquet("trades/kalshi_trades_2026-07-12.parquet")
+# created_time = when the EXCHANGE matched it  <-- use this
+# capture_ts   = when the recorder saw it      <-- latency diagnostics only
+
+trades["t"] = pd.to_datetime(trades["created_time"], utc=True)
+mlb = trades[trades["ticker"].str.startswith("KXMLBGAME")]</code></pre>
+
+            <p>Every polled tape has duplicate risk (re-poll windows overlap). A good capture
+            dedupes by the exchange's <code>trade_id</code> before shipping; verify anyway,
+            because it's one line:</p>
+
+<pre><code>assert trades["trade_id"].is_unique</code></pre>
+
+            <h2>Joining prints to the book they hit</h2>
+
+            <p>The core microstructure join: attach each print to the last book snapshot at or
+            before it. That's <code>merge_asof</code>:</p>
+
+<pre><code>book = tob.reset_index().sort_values("ts")
+prints = mlb.sort_values("t")
+
+joined = pd.merge_asof(
+    prints, book,
+    left_on="t", right_on="ts", by="ticker",
+    direction="backward", tolerance=pd.Timedelta("60s"),
+)
+# aggressive buys hitting the ask vs sells hitting the bid
+joined["at_ask"] = joined["price"] >= joined["best_ask_c"]</code></pre>
+
+            <p>With a ~28-second snapshot cadence, alignment precision is bounded by the cadence —
+            fine for flow-imbalance and spread studies, not for queue-position claims. Know what
+            your data can and cannot support; overclaiming resolution is the most common bug in
+            amateur microstructure work.</p>
+
+            <h2>A first real feature: signed flow vs. next repricing</h2>
+
+<pre><code>joined["signed"] = joined["count"] * joined["at_ask"].map({True: 1, False: -1})
+flow = (joined.set_index("t")
+        .groupby("ticker")["signed"]
+        .resample("5min").sum())
+
+mid = ((book.set_index("ts")["best_bid_c"] + book["best_ask_c"].values) / 2)
+# ... then lag the flow one bar against forward mid changes and measure IC</code></pre>
+
+            <p>Whether signed flow predicts anything on a sports book is genuinely open — these
+            markets are efficient enough that the honest prior is "probably not much." But that's
+            a question you can now answer with data instead of vibes, which is the entire point.</p>
+
+            <h2>Know your dataset's gaps before you trust a result</h2>
+
+            <p>Any live capture has holes — recorder restarts, host downtime, coverage that grew
+            over time. The tape linked above ships a coverage file listing every known gap with
+            UTC timestamps (including two multi-hour host-sleep windows in mid-July, and the fact
+            that the print tape covers four moneyline families, with MLB starting July 10). Read
+            that file first and mask those windows in your analysis, or your "signal" will be an
+            artifact of a capture gap. If a data vendor doesn't publish its gaps, assume they
+            exist anyway.</p>
+
+            <div class="callout">
+                <p>Free to inspect before buying: a 400-row depth sample and the complete schema
+                doc are on <a href="https://zenhodl.net/samples">zenhodl.net's samples page</a>,
+                no signup. The $9 tryout is two complete days of both feeds — enough to run
+                everything in this post.</p>
+            </div>
+
+            <div class="cta">
+                <p><strong>Build against real book + tape data</strong><br>
+                Two full days of Kalshi L2 depth and deduped prints, identical schema to the full archive.</p>
+                <a class="button" href="https://zenhodl.net/products/kalshi_micro_tryout">Get the $9 tryout &rarr;</a>
+            </div>
+        </article>
+    </div>
+    <footer><div class="container">&copy; 2026 CodeFix Solution &middot; <a href="/">Home</a></div></footer>
+</body>
+</html>
