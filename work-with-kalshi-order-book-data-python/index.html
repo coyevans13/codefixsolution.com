@@ -75,7 +75,7 @@
 
 <pre><code>import pandas as pd
 
-depth = pd.read_parquet("depth/kalshi_depth_2026-07-12.parquet")
+depth = pd.read_parquet("depth/kalshi_depth_2026-07-18.parquet")
 # columns: timestamp (epoch s), ticker, sport, market_type, line,
 #          side ('bid'/'ask'), level (0=best), price_c (cents), size
 
@@ -108,7 +108,7 @@ tob["spread_c"] = tob["best_ask_c"] - tob["best_bid_c"]</code></pre>
 
             <h2>The trade tape: two timestamps, one trap</h2>
 
-<pre><code>trades = pd.read_parquet("trades/kalshi_trades_2026-07-12.parquet")
+<pre><code>trades = pd.read_parquet("trades/kalshi_trades_2026-07-18.parquet")
 # created_time = when the EXCHANGE matched it  <-- use this
 # capture_ts   = when the recorder saw it      <-- latency diagnostics only
 
