@@ -52,7 +52,8 @@
 
             <p>This guide walks through the practical Python for working with one such capture:
             daily parquet files of L2 depth (up to 20 levels per side, ~28-second snapshots) plus
-            the executed trade tape (prints with taker side and live game state). The patterns
+            the executed trade tape (prints with taker side and a capture-time game-state
+            field). The patterns
             apply to any book+tape dataset, but the code below runs as-is against the
             <a href="https://zenhodl.net/products/kalshi_micro_tape">Kalshi Microstructure Tape</a>
             (there's a $9 two-day slice with an identical schema if you want to follow along
@@ -94,6 +95,12 @@ tob["spread_c"] = tob["best_ask_c"] - tob["best_bid_c"]</code></pre>
                 <li><strong>Levels are capped at 20 per side.</strong> If your VWAP-to-size
                 calculation walks off level 19, the answer is "deeper than the data shows,"
                 not a fill price. Handle that case explicitly.</li>
+                <li><strong>The per-print <code>game_state</code> is capture-time, not
+                event-time.</strong> The poller attaches whatever scoreboard state exists when
+                it retrieves the print — median ~26s after <code>created_time</code>, with a
+                long tail on backfills. Join to your own score timeline at
+                <code>created_time</code> (which is exactly what the <code>merge_asof</code>
+                pattern below does for books).</li>
                 <li><strong>Snapshots are polled, not event-driven.</strong> A gap between rows
                 means "no observation," never "no change." Resample with
                 <code>.asof()</code>-style joins, not forward-fill over long gaps.</li>
